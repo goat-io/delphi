@@ -206,6 +206,8 @@ RFC-0026 Tasks & Questions
 
 RFC-0029 Task Execution Protocol
 
+RFC-0030 Task Scheduling & Priority Queue
+
 These define:
 
 How classification evolves.
@@ -213,6 +215,8 @@ How classification evolves.
 How uncertainty becomes work.
 
 How agents claim, execute, and close tasks.
+
+How the Brain orders and budgets future work.
 
 ---
 
@@ -246,6 +250,7 @@ RFC-0000
 │   ├── RFC-0008
 │   │   └── RFC-0026
 │   │       └── RFC-0029
+│   │           └── RFC-0030
 │   ├── RFC-0013
 │   ├── RFC-0009
 │   ├── RFC-0014
@@ -368,7 +373,7 @@ RFC-0000
 
 # Specification Status
 
-All RFCs through RFC-0029 are written (Status: Draft).
+All RFCs through RFC-0030 are written (Status: Draft).
 
 Implementation documents:
 

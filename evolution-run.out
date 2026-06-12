@@ -146,3 +146,32 @@ $ tsx scripts/bootstrap-brain.ts
 [bootstrap] Totals: created=34 merged=52 skippedAssets=49
 
 Closure: UNVERIFIED
+[main 96ed135] evolve(cycle 2): log
+ Committer: Ignacio Cabrera <igca@Ignacios-MacBook-Pro-2.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 2 files changed, 56 insertions(+)
+
+━━━ Cycle 3/3 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Top debt: [SPEC_GAP] pri=30 — --- A Task is a unit of future work
+existing task: leaf_dfe7805648b84e518fa016ee
+
+Running agent...
+246 lines — within the target range. All changes are complete:
+
+1. **RFC-0030** created at `rfcs/RFC-0030-Task-Scheduling-and-Priority-Queue.md` — covers how the Brain orders, budgets, and schedules tasks; fills the gap between "what a task is" (RFC-0026) and "how an agent runs one" (RFC-0029).
+2. **RFC-9999** updated — RFC-0030 added to Phase 11 reading order, dependency graph (`RFC-0029 → RFC-0030`), and specification status bumped to "through RFC-0030".
+
+WORK COMPLETE: drafted RFC-0030 (Task Scheduling & Priority Queue) covering priority computation, urgency modifiers, budget constraints, and task selection; updated RFC-9999 Phase 11 reading order and dependency graph.
+
+Gate GREEN
