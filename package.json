@@ -11,17 +11,20 @@
     "test": "vitest run",
     "demo": "tsx scripts/demo.ts",
     "api": "tsx apps/api/src/server.ts",
+    "mcp": "tsx apps/mcp/src/server.ts",
+    "brain:bootstrap": "tsx scripts/bootstrap-brain.ts",
     "bt": "pnpm typecheck && pnpm lint:check && pnpm test",
     "build:packages": "pnpm -r --filter './packages/**' build",
     "test:engine": "pnpm -r --filter './packages/delphi-core' --filter './packages/delphi-ai' --filter './packages/delphi-langgraph' --filter './packages/delphi-sandbox' --filter './packages/realtime-broker' test",
-    "lint": "biome check --write packages/delphi-protocol packages/delphi-knowledge packages/delphi-ingestion packages/delphi-extraction packages/delphi-indexer packages/delphi-agent apps/api scripts tests",
-    "lint:check": "biome check packages/delphi-protocol packages/delphi-knowledge packages/delphi-ingestion packages/delphi-extraction packages/delphi-indexer packages/delphi-agent apps/api scripts tests",
-    "format": "biome format --write packages/delphi-protocol packages/delphi-knowledge packages/delphi-ingestion packages/delphi-extraction packages/delphi-indexer packages/delphi-agent apps/api scripts tests"
+    "lint": "biome check --write packages/delphi-protocol packages/delphi-knowledge packages/delphi-ingestion packages/delphi-extraction packages/delphi-indexer packages/delphi-agent apps/api apps/mcp scripts tests",
+    "lint:check": "biome check packages/delphi-protocol packages/delphi-knowledge packages/delphi-ingestion packages/delphi-extraction packages/delphi-indexer packages/delphi-agent apps/api apps/mcp scripts tests",
+    "format": "biome format --write packages/delphi-protocol packages/delphi-knowledge packages/delphi-ingestion packages/delphi-extraction packages/delphi-indexer packages/delphi-agent apps/api apps/mcp scripts tests"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
     "@goatlab/biome": "^0.1.1",
     "@goatlab/tsconfig": "^0.2.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/node": "^22.10.0",
     "rimraf": "^6.0.0",
     "tsx": "^4.19.0",

@@ -217,6 +217,18 @@ export class BrainStore {
     return mapBrain(row)
   }
 
+  async getBrainByName(name: string): Promise<Brain | null> {
+    const { rows } = await this.db.query<Record<string, unknown>>(
+      `SELECT * FROM brains WHERE name = $1 LIMIT 1`,
+      [name],
+    )
+    const row = rows[0]
+    if (!row) {
+      return null
+    }
+    return mapBrain(row)
+  }
+
   // ── Asset ──────────────────────────────────────────────────────────────────
 
   async createAsset(a: Omit<Asset, 'id' | 'createdAt'>): Promise<Asset> {

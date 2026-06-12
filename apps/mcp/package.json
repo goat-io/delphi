@@ -1,0 +1,20 @@
+{
+  "name": "@goatlab/delphi-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@goatlab/delphi-knowledge": "workspace:*",
+    "@goatlab/delphi-protocol": "workspace:*",
+    "@goatlab/delphi-extraction": "workspace:*",
+    "@goatlab/delphi-agent": "workspace:*",
+    "zod": "^4.4.3"
+  },
+  "scripts": {
+    "lint": "biome check --write .",
+    "lint:check": "biome check .",
+    "format": "biome format --write ."
+  }
+}

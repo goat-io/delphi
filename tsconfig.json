@@ -32,6 +32,7 @@
     "packages/delphi-indexer/src/**/*.ts",
     "packages/delphi-agent/src/**/*.ts",
     "apps/api/src/**/*.ts",
+    "apps/mcp/src/**/*.ts",
     "scripts/**/*.ts",
     "tests/**/*.ts"
   ]

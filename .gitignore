@@ -1,5 +1,6 @@
 node_modules/
 dist/
 .delphi-data/
+.delphi/
 *.log
 .DS_Store

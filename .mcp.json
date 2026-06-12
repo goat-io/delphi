@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "delphi": {
+      "command": "pnpm",
+      "args": ["mcp"]
+    }
+  }
+}

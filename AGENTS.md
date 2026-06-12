@@ -482,6 +482,19 @@ verifiability: strict typing, exhaustive discriminated unions,
 schema validation at every boundary, and tests that an agent
 can run to verify its own changes.
 
+# Delphi In Delphi — USE THE BRAIN
+
+This repo's own knowledge is a Delphi Brain (.delphi/brain,
+embedded PGlite, gitignored; rebuild: `pnpm brain:bootstrap`).
+The "delphi" MCP server (.mcp.json) exposes it:
+
+navigate_index → search → get_leaf → ask — use these to answer
+spec questions BEFORE re-reading rfcs/ files (navigation before
+retrieval, RFC-0007). Use trace_dependencies / what_breaks_if
+for impact questions. End sessions by writing decisions and
+lessons back via propose_knowledge (RFC-0027 candidate path —
+never write leaves directly).
+
 The Delphi specification — 28 RFCs plus the implementation
 blueprints — lives in rfcs/. It is the bible of this repo:
 every design decision must trace to it, and spec changes are
