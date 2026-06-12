@@ -691,7 +691,19 @@ export class VerifyClosureStep extends FunctionStep<
         ).some(f => f.startsWith('rfcs/RFC-') && f.endsWith('.md'))
       }
 
-      const closureMet = !stillPresent || researchAdded || rfcAdded
+      // QUEUED_TASK closure: any committed file changes + hasWorkComplete → done
+      let queuedTaskDone = false
+      if (state.trigger === 'QUEUED_TASK') {
+        const added = gitAddedFiles(
+          cwd,
+          state.preCommitHash!,
+          state.commitHash!,
+        )
+        queuedTaskDone = added.length > 0 && (state.hasWorkComplete ?? false)
+      }
+
+      const closureMet =
+        !stillPresent || researchAdded || rfcAdded || queuedTaskDone
 
       if (closureMet) {
         const existing = await store.getLeaf(state.taskId!)

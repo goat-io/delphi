@@ -290,6 +290,135 @@ describe('evolve harness', () => {
     expect(noisyItem).toBeUndefined()
   })
 
+  it('7a. QUEUED_TASK: ACTIVE TASK with trigger HUMAN_REQUEST and closureCriteria (no dispatchedAt) surfaces in scanDebt with its priority', async () => {
+    const opsRegion = await store.getRegionByTitle(brainId, 'Operations')
+    const opsRegionId = opsRegion?.id
+
+    const queuedTask = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'ACTIVE',
+      title: 'Rubric-back the test threshold values',
+      statement: 'Move thresholds from source constants into a RUBRIC leaf.',
+      aliases: [],
+      tags: ['rubric-unification'],
+      regionId: opsRegionId,
+      content: {
+        trigger: 'HUMAN_REQUEST',
+        priority: 95,
+        closureCriteria:
+          'the named gate reads from a RUBRIC leaf and persists EVALUATION leaves',
+      },
+    })
+
+    const debt = await scanDebt(store, brainId)
+    const queuedItems = debt.filter(d => d.trigger === 'QUEUED_TASK')
+
+    // Must include our task
+    const found = queuedItems.find(d => d.target === queuedTask.id)
+    expect(found).toBeDefined()
+    expect(found?.priority).toBe(95)
+    expect(found?.targetTitle).toBe('Rubric-back the test threshold values')
+
+    // Clean up: mark dispatched so other tests don't pick it up
+    await store.updateLeaf(queuedTask.id, {
+      content: {
+        trigger: 'HUMAN_REQUEST',
+        priority: 95,
+        closureCriteria:
+          'the named gate reads from a RUBRIC leaf and persists EVALUATION leaves',
+        dispatchedAt: new Date().toISOString(),
+      },
+    })
+  })
+
+  it('7b. QUEUED_TASK: createTaskFromDebt stamps dispatchedAt on the existing leaf, preventing re-pick on second scan', async () => {
+    const opsRegion = await store.getRegionByTitle(brainId, 'Operations')
+    const opsRegionId = opsRegion?.id
+
+    const queuedTask2 = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'ACTIVE',
+      title: 'Rubric-back the dispatch test leaf',
+      statement: 'A task to test dispatchedAt stamping.',
+      aliases: [],
+      tags: ['rubric-unification'],
+      regionId: opsRegionId,
+      content: {
+        trigger: 'HUMAN_REQUEST',
+        priority: 95,
+        closureCriteria: 'implementation done and tests pass',
+      },
+    })
+
+    const debtBefore = await scanDebt(store, brainId)
+    const itemBefore = debtBefore.find(
+      d => d.trigger === 'QUEUED_TASK' && d.target === queuedTask2.id,
+    )
+    expect(itemBefore).toBeDefined()
+
+    // Dispatch it
+    await createTaskFromDebt(store, brainId, itemBefore as DebtItem)
+
+    // Re-scan — should NOT appear again (dispatchedAt set)
+    const debtAfter = await scanDebt(store, brainId)
+    const itemAfter = debtAfter.find(
+      d => d.trigger === 'QUEUED_TASK' && d.target === queuedTask2.id,
+    )
+    expect(itemAfter).toBeUndefined()
+  })
+
+  it('7c. buildWorkPrompt QUEUED_TASK: contains closureCriteria, WORK COMPLETE rule, and no-migrated-packages rule', async () => {
+    const queuedItem: DebtItem = {
+      trigger: 'QUEUED_TASK',
+      target: 'leaf_queued_test_001',
+      targetTitle: 'Rubric-back resolution thresholds',
+      detail:
+        'Extraction merge/link/flag thresholds move from constants in resolve.ts to a versioned RUBRIC leaf.',
+      priority: 95,
+    }
+
+    const fakeQueuedTask = {
+      id: 'leaf_queued_test_001',
+      kind: 'TASK' as const,
+      status: 'ACTIVE' as const,
+      title: 'Rubric-back resolution thresholds',
+      statement:
+        'Extraction merge/link/flag thresholds move from constants in resolve.ts to a versioned RUBRIC leaf.',
+      brainId,
+      aliases: [],
+      tags: ['rubric-unification'],
+      version: 1,
+      content: {
+        trigger: 'HUMAN_REQUEST',
+        priority: 95,
+        closureCriteria:
+          'the named gate reads from a RUBRIC leaf and persists EVALUATION leaves',
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+
+    const prompt = buildWorkPrompt(
+      queuedItem,
+      fakeQueuedTask as Parameters<typeof buildWorkPrompt>[1],
+    )
+
+    // Must contain closureCriteria verbatim
+    expect(prompt).toContain(
+      'the named gate reads from a RUBRIC leaf and persists EVALUATION leaves',
+    )
+    // Must contain WORK COMPLETE instruction
+    expect(prompt).toContain('WORK COMPLETE')
+    // Must contain no-migrated-packages rule
+    expect(prompt).toContain('Never touch packages/delphi-')
+    // Must reference getRubricByTitle or seedRubrics (rubric usage guidance)
+    expect(prompt).toContain('getRubricByTitle')
+    // Must reference persistEvaluation
+    expect(prompt).toContain('persistEvaluation')
+  })
+
   it('7. buildWorkPrompt: EMPTY_REGION contains closure criteria and WORK COMPLETE rule; SPEC_GAP contains RFC-9999', async () => {
     const emptyItem: DebtItem = {
       trigger: 'EMPTY_REGION',

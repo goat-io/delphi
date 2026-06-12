@@ -16,6 +16,7 @@ export type DebtTrigger =
   | 'SPEC_GAP'
   | 'OPEN_QUESTION'
   | 'GOAL_GAP'
+  | 'QUEUED_TASK'
 
 export interface DebtItem {
   trigger: DebtTrigger
@@ -43,6 +44,8 @@ function closureFor(trigger: DebtTrigger): string {
       return 'question answered with ≥1 evidence-backed belief'
     case 'GOAL_GAP':
       return 'goal metric meets target on re-evaluation'
+    case 'QUEUED_TASK':
+      return 'the named gate reads from a RUBRIC leaf and persists EVALUATION leaves'
   }
 }
 
@@ -210,6 +213,34 @@ export async function scanDebt(
     })
   }
 
+  // QUEUED_TASK: ACTIVE TASK leaves with HUMAN_REQUEST or queued flag, not yet dispatched
+  const allTasks = await store.listLeaves(brainId, { kind: 'TASK' })
+  for (const taskLeaf of allTasks) {
+    if (taskLeaf.status !== 'ACTIVE') {
+      continue
+    }
+    const c = (taskLeaf.content ?? {}) as Record<string, unknown>
+    // Must have closureCriteria (marks it as a work item)
+    if (!c.closureCriteria) {
+      continue
+    }
+    // Must not already have been dispatched
+    if (c.dispatchedAt) {
+      continue
+    }
+    // Must be a human-queued task
+    if (c.trigger !== 'HUMAN_REQUEST' && c.queued !== true) {
+      continue
+    }
+    items.push({
+      trigger: 'QUEUED_TASK',
+      target: taskLeaf.id,
+      targetTitle: taskLeaf.title,
+      detail: (taskLeaf.statement ?? taskLeaf.title) as string,
+      priority: typeof c.priority === 'number' ? c.priority : 50,
+    })
+  }
+
   // Sort by priority descending
   items.sort((a, b) => b.priority - a.priority)
 
@@ -223,6 +254,22 @@ export async function createTaskFromDebt(
   brainId: string,
   item: DebtItem,
 ): Promise<Leaf> {
+  // QUEUED_TASK: return the existing leaf after stamping dispatchedAt (prevents re-pick)
+  if (item.trigger === 'QUEUED_TASK') {
+    const existing = await store.getLeaf(item.target)
+    if (!existing) {
+      throw new Error(`QUEUED_TASK target leaf ${item.target} not found`)
+    }
+    const updated = await store.updateLeaf(item.target, {
+      content: {
+        ...((existing.content ?? {}) as Record<string, unknown>),
+        dispatchedAt: nowIso(),
+      },
+    })
+    console.log(`queued task dispatched: ${updated.id}`)
+    return updated
+  }
+
   // Dedupe: look for existing ACTIVE TASK with same trigger + target
   const existingTasks = await store.listLeaves(brainId, { kind: 'TASK' })
   const existing = existingTasks.find(
@@ -406,6 +453,36 @@ Decide the most impactful concrete action you can take now to move this metric t
 3. Adding or curating docs if regions are empty.
 Do NOT write empty files or placeholder content. Every file must contain real knowledge.
 After acting, re-run \`pnpm brain:bootstrap\` to update indexes.`
+      break
+    }
+
+    case 'QUEUED_TASK': {
+      const taskContent = (task.content ?? {}) as Record<string, unknown>
+      const taskStatement = (task.statement ?? task.title) as string
+      const taskClosureCriteria =
+        (taskContent.closureCriteria as string | undefined) ??
+        closureFor(item.trigger)
+      body = `## Engineering Work Order
+
+**Task title:** ${task.title}
+
+**Statement / description:**
+${taskStatement}
+
+**Closure criteria:**
+${taskClosureCriteria}
+
+### Instructions
+
+This is a CODE task operating in the knowledge plane (packages/delphi-*, scripts/, tests/).
+
+1. Read the relevant source files first before writing any code.
+2. Implement the change minimally — no gold-plating.
+3. Add or extend vitest tests for every changed behaviour.
+4. Rubric leaves are read via \`getRubricByTitle(store, brainId, title)\` from \`scripts/rubrics.ts\` and seeded in \`seedRubrics\`. If this task needs a new rubric, extend \`seedRubrics\` (idempotent: check for existing before creating).
+5. EVALUATION leaves are persisted via \`persistEvaluation(store, brainId, input)\` from \`scripts/governance-bridge.ts\`. Use it to record evaluation results against rubric criteria.
+6. Constants used as thresholds MUST stay as runtime fallbacks when no brain or rubric is available — libraries must never hard-require a live brain at import time.
+7. Run \`pnpm typecheck && pnpm lint:check && pnpm test\` and ensure it is green before finishing.`
       break
     }
   }

@@ -285,6 +285,18 @@ export function makeConstitutionGuard(): DefaultConstitutionGuard {
         }
       }
 
+      const isCodeWork = trigger === 'QUEUED_TASK'
+
+      if (isCodeWork) {
+        return {
+          allow: true,
+          requiresHuman: true,
+          reasons: [
+            'QUEUED_TASK is a code-touching engineering work order — Constitution allows but requires perspective review (change-scope + spec-coherence).',
+          ],
+        }
+      }
+
       const isDocsWork =
         description.includes('docs/') ||
         description.includes('research/') ||
