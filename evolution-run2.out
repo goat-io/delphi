@@ -1,0 +1,18 @@
+$ tsx scripts/evolution-loop.ts --cycles 2
+
+╔══ Delphi Evolution Loop ═══════════════════════════════════════╗
+║  cycles=2  dry-run=false  executor=pty  data=/Users/igca/Documents/Code/delphi/.delphi/brain
+╚════════════════════════════════════════════════════════════════╝
+
+claude CLI: 2.1.175 (Claude Code)
+Executor: pty  permission-mode: true
+
+
+━━━ Cycle 1/2 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+existing task: leaf_f8ed0adf4b024e6aa94ceaed
+Top debt: [SPEC_GAP] pri=30 — Candidate
+
+Running agent (executor=pty)...
+script: tcgetattr/ioctl: Operation not supported on socket
+
+Gate GREEN
