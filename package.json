@@ -18,7 +18,8 @@
     "test:engine": "pnpm -r --filter './packages/delphi-core' --filter './packages/delphi-ai' --filter './packages/delphi-langgraph' --filter './packages/delphi-sandbox' --filter './packages/realtime-broker' test",
     "lint": "biome check --write packages/delphi-protocol packages/delphi-knowledge packages/delphi-ingestion packages/delphi-extraction packages/delphi-indexer packages/delphi-agent apps/api apps/mcp scripts tests",
     "lint:check": "biome check packages/delphi-protocol packages/delphi-knowledge packages/delphi-ingestion packages/delphi-extraction packages/delphi-indexer packages/delphi-agent apps/api apps/mcp scripts tests",
-    "format": "biome format --write packages/delphi-protocol packages/delphi-knowledge packages/delphi-ingestion packages/delphi-extraction packages/delphi-indexer packages/delphi-agent apps/api apps/mcp scripts tests"
+    "format": "biome format --write packages/delphi-protocol packages/delphi-knowledge packages/delphi-ingestion packages/delphi-extraction packages/delphi-indexer packages/delphi-agent apps/api apps/mcp scripts tests",
+    "evolve": "tsx scripts/evolve.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",

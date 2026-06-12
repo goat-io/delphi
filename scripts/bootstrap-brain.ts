@@ -153,6 +153,7 @@ export async function bootstrapBrain(opts: {
       resolve(repoRoot, 'packages', p, 'README.md'),
     ),
     resolve(repoRoot, 'apps', 'api', 'README.md'),
+    resolve(repoRoot, 'apps', 'mcp', 'README.md'),
   ].filter(existsSync)
 
   log(
