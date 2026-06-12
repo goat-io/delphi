@@ -58,7 +58,7 @@ export function parseArgs(argv: string[]): LoopArgs {
 
 // ── Git helpers ───────────────────────────────────────────────────────────────
 
-function gitPorcelain(cwd: string): string[] {
+export function gitPorcelain(cwd: string): string[] {
   const r = spawnSync('git', ['status', '--porcelain'], {
     cwd,
     encoding: 'utf8',
@@ -66,7 +66,7 @@ function gitPorcelain(cwd: string): string[] {
   return (r.stdout ?? '').split('\n').filter(Boolean)
 }
 
-function gitShortHash(cwd: string): string {
+export function gitShortHash(cwd: string): string {
   const r = spawnSync('git', ['rev-parse', '--short', 'HEAD'], {
     cwd,
     encoding: 'utf8',
@@ -75,7 +75,11 @@ function gitShortHash(cwd: string): string {
 }
 
 /** Return names of files added between two commits (uses --diff-filter=A). */
-function gitAddedFiles(cwd: string, before: string, after: string): string[] {
+export function gitAddedFiles(
+  cwd: string,
+  before: string,
+  after: string,
+): string[] {
   const r = spawnSync(
     'git',
     ['diff', '--name-only', '--diff-filter=A', `${before}..${after}`],
@@ -456,7 +460,7 @@ async function spawnAgent(
 
 // ── Gate ─────────────────────────────────────────────────────────────────────
 
-function runGate(cwd: string): SpawnSyncReturns<string> {
+export function runGate(cwd: string): SpawnSyncReturns<string> {
   return spawnSync(
     'pnpm',
     ['typecheck', '&&', 'pnpm', 'lint:check', '&&', 'pnpm', 'test'],
@@ -464,17 +468,17 @@ function runGate(cwd: string): SpawnSyncReturns<string> {
   )
 }
 
-function gateGreen(r: SpawnSyncReturns<string>): boolean {
+export function gateGreen(r: SpawnSyncReturns<string>): boolean {
   return r.status === 0
 }
 
-function lastLines(text: string, n: number): string {
+export function lastLines(text: string, n: number): string {
   return text.split('\n').slice(-n).join('\n')
 }
 
 // ── Rollback ─────────────────────────────────────────────────────────────────
 
-async function rollback(
+export async function rollback(
   cwd: string,
   snapshotPaths: string[],
   currentLines: string[],
@@ -509,7 +513,7 @@ async function rollback(
 
 // ── Evolution log ─────────────────────────────────────────────────────────────
 
-interface CycleRecord {
+export interface CycleRecord {
   cycle: number
   timestamp: string
   taskId: string
@@ -523,7 +527,7 @@ interface CycleRecord {
   healthAfter: string
 }
 
-function appendCycleLog(cwd: string, rec: CycleRecord): void {
+export function appendCycleLog(cwd: string, rec: CycleRecord): void {
   const logPath = resolve(cwd, 'evolution.log.md')
   if (!existsSync(logPath)) {
     writeFileSync(
@@ -553,7 +557,7 @@ function appendCycleLog(cwd: string, rec: CycleRecord): void {
 
 // ── Health string helper ──────────────────────────────────────────────────────
 
-function healthStr(h: {
+export function healthStr(h: {
   leaves: number
   beliefs: number
   evidence: number
@@ -564,7 +568,7 @@ function healthStr(h: {
 
 // ── Open / close db ───────────────────────────────────────────────────────────
 
-async function openStore(dataDir: string): Promise<{
+export async function openStore(dataDir: string): Promise<{
   store: BrainStore
   db: { close(): Promise<void>; query: unknown }
 }> {

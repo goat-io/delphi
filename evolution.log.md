@@ -86,3 +86,15 @@ Automatically maintained by `pnpm evolve:loop`.
 | Closure | CLOSED |
 | Health before | leaves=984 beliefs=560 evidence=1756 openQ=179 |
 | Health after | leaves=997 beliefs=572 evidence=1774 openQ=180 |
+## Cycle 1 — 2026-06-12T17:39:22.980Z
+
+| Field | Value |
+|-------|-------|
+| Task | leaf_f8ed0adf4b024e6aa94ceaed — [SPEC_GAP] Candidate |
+| Trigger | SPEC_GAP |
+| Agent summary | WORK COMPLETE: drafted RFC-0031-Candidate-Protocol.md specifying the Candidate as a first-class protocol primitive with formal state machine, persistence contract, batch/within-batch deduplication semantics, resolution queue protocol, and retention rules; updated RFC-9999 to reference it in Phase 10 and the dependency graph. |
+| Gate | GREEN |
+| Commit | ef909cd |
+| Closure | CLOSED |
+| Health before | leaves=997 beliefs=572 evidence=1774 openQ=180 |
+| Health after | leaves=1046 beliefs=606 evidence=1883 openQ=184 |

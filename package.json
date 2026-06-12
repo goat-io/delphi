@@ -20,7 +20,8 @@
     "lint:check": "biome check packages/delphi-protocol packages/delphi-knowledge packages/delphi-ingestion packages/delphi-extraction packages/delphi-indexer packages/delphi-agent apps/api apps/mcp scripts tests",
     "format": "biome format --write packages/delphi-protocol packages/delphi-knowledge packages/delphi-ingestion packages/delphi-extraction packages/delphi-indexer packages/delphi-agent apps/api apps/mcp scripts tests",
     "evolve": "tsx scripts/evolve.ts",
-    "evolve:loop": "tsx scripts/evolution-loop.ts"
+    "evolve:loop": "tsx scripts/evolution-loop.ts",
+    "evolve:engine": "tsx scripts/evolution-workflow.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
@@ -28,6 +29,7 @@
     "@goatlab/tsconfig": "^0.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.0",
     "rimraf": "^6.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
@@ -36,6 +38,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",
     "@electric-sql/pglite": "^0.5.2",
+    "@goatlab/delphi-core": "workspace:*",
     "fastify": "^5.8.5",
     "pg": "^8.21.0",
     "yaml": "^2.9.0",

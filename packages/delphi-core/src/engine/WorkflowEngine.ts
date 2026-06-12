@@ -1764,7 +1764,7 @@ export class WorkflowEngine {
       runIds,
     )
 
-    const countMap = new Map(
+    const countMap = new Map<string, { stepCount: number; completedStepCount: number }>(
       stepCounts.map(r => [
         r.workflowRunId,
         { stepCount: r.stepCount, completedStepCount: r.completedStepCount },
