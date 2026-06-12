@@ -139,6 +139,7 @@ type LeafKind =
   | "ONTOLOGY_TYPE"
   | "RELATIONSHIP_TYPE"
   | "VALIDATION_RULE"
+  | "EVALUATION"
 ```
 
 Everything else extends these.
@@ -151,6 +152,7 @@ Notes:
   Asset leaves store metadata only; the artifact itself remains external.
 - Concepts are stored as OBJECT leaves.
   Concept vs entity distinctions belong to the ontology layer, not LeafKind.
+- EVALUATION — stores per-criterion rubric assessment with finalScore, verdict, and EVALUATES edge to the assessed leaf.
 
 ---
 

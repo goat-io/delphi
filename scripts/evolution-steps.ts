@@ -29,6 +29,7 @@ import {
   makeConstitutionGuard,
   makePerspectiveReviewer,
   makeReviewDecider,
+  persistEvaluation,
 } from './governance-bridge.js'
 
 // ── Trigger input (what we pass to engine.start()) ────────────────────────────
@@ -491,6 +492,57 @@ export class ReviewStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
 
     const matrix = await reviewer.review(decision, perspectives)
     const reviewDecision = decider.decide(matrix, perspectives)
+
+    // Persist one EVALUATION leaf per perspective (best-effort — don't block the cycle)
+    {
+      const dataDir = resolve(
+        cwd,
+        process.env.DELPHI_DATA_DIR ?? '.delphi/brain',
+      )
+      const evalDb = await createDb({ dataDir })
+      await migrate(evalDb)
+      const evalStore = new BrainStore(evalDb)
+      try {
+        const brain = await evalStore.getBrainByName('delphi').catch(() => null)
+        if (brain && state.taskId) {
+          const evalBrainId = brain.id
+          for (const verdict of matrix.verdicts) {
+            const cs = (verdict as any).criterionScores ?? []
+            const fs =
+              typeof (verdict as any).finalScore === 'number'
+                ? (verdict as any).finalScore
+                : verdict.assessment === 'approve'
+                  ? 0.8
+                  : verdict.assessment === 'reject'
+                    ? 0.2
+                    : 0.5
+            const evalVerdict:
+              | 'approve'
+              | 'reject'
+              | 'needs_human'
+              | 'neutral' =
+              verdict.assessment === 'approve'
+                ? 'approve'
+                : verdict.assessment === 'reject'
+                  ? 'reject'
+                  : 'needs_human'
+            await persistEvaluation(evalStore, evalBrainId, {
+              rubricId: `${verdict.perspective}-rubric`,
+              targetLeafId: state.taskId,
+              perspective: verdict.perspective,
+              scores: cs,
+              finalScore: fs,
+              verdict: evalVerdict,
+              rationale: (verdict.concerns ?? []).join('; '),
+            }).catch(() => {
+              /* best-effort */
+            })
+          }
+        }
+      } finally {
+        await evalDb.close()
+      }
+    }
 
     console.log(
       `[review] pid=${process.pid} outcome=${reviewDecision.outcome} score=${reviewDecision.score.toFixed(2)} reasons=[${reviewDecision.reasons.join('; ')}]`,

@@ -174,6 +174,7 @@ REJECT verdict rolls back cycle changes, marks the task DISPUTED,
 and records the full tradeoff matrix in the task content. The
 verdict (outcome, score, reasons) is appended to every
 `evolution.log.md` cycle entry.
+Perspectives are rubric-backed (RFC-0005): each loads a RUBRIC leaf, scores per criterion with weights, verdicts derive from rubric quality gates, results persist as EVALUATION leaves with EVALUATES edges.
 
 ---
 

@@ -16,6 +16,7 @@ export const LeafKindSchema = z.enum([
   'ONTOLOGY_TYPE',
   'RELATIONSHIP_TYPE',
   'VALIDATION_RULE',
+  'EVALUATION',
 ])
 export type LeafKind = z.infer<typeof LeafKindSchema>
 

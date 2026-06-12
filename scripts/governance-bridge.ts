@@ -1,10 +1,11 @@
 // scripts/governance-bridge.ts — Wire @goatlab/delphi-governance to our stack.
 //
 // Provides:
-//   makeBrainClientAdapter  — BrainClient over BrainStore
-//   makeConstitutionGuard   — classifies evolution work orders
-//   makePerspectiveReviewer — 3 heuristic perspectives for RFC review
-//   makeReviewDecider       — rejects on any single reject, escalates otherwise
+//   makeBrainClientAdapter   — BrainClient over BrainStore
+//   makeConstitutionGuard    — classifies evolution work orders
+//   makePerspectiveReviewer  — 3 rubric-backed heuristic perspectives for RFC review
+//   makeReviewDecider        — rejects on any single reject, escalates otherwise
+//   persistEvaluation        — creates EVALUATION leaf + EVALUATES edge
 
 import { existsSync, readFileSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
@@ -29,23 +30,93 @@ import {
 } from '@goatlab/delphi-governance'
 import { BrainStore } from '@goatlab/delphi-knowledge'
 import type { Leaf } from '@goatlab/delphi-protocol'
+import type { RubricContent } from './rubrics.js'
+import { getRubricByTitle } from './rubrics.js'
+
+// ── CriterionScore ────────────────────────────────────────────────────────────
+
+export interface CriterionScore {
+  criterionId: string
+  score: number // 0..1
+  rationale: string
+}
+
+// ── EvaluationInput ───────────────────────────────────────────────────────────
+
+export interface EvaluationInput {
+  rubricId: string
+  targetLeafId: string
+  perspective: string
+  scores: CriterionScore[]
+  finalScore: number
+  verdict: 'approve' | 'reject' | 'needs_human' | 'neutral'
+  rationale?: string
+}
+
+// ── persistEvaluation ─────────────────────────────────────────────────────────
+
+export async function persistEvaluation(
+  store: BrainStore,
+  brainId: string,
+  input: EvaluationInput,
+): Promise<Leaf> {
+  const targetLeaf = await store.getLeaf(input.targetLeafId).catch(() => null)
+  const targetSlice = (targetLeaf?.title ?? input.targetLeafId).slice(0, 40)
+  const evalTitle = `Evaluation: ${input.perspective} on ${targetSlice}`
+
+  const existing = await store.listLeaves(brainId)
+  const found = existing.find(
+    l => l.kind === 'EVALUATION' && l.title === evalTitle,
+  )
+  if (found) {
+    return found
+  }
+
+  const regions = await store.listRegions(brainId)
+  const objRegion = regions.find(r => r.title === 'Objectives')
+
+  const verdictLine =
+    input.verdict === 'approve'
+      ? `APPROVED (score ${input.finalScore.toFixed(2)})`
+      : input.verdict === 'reject'
+        ? `REJECTED (score ${input.finalScore.toFixed(2)})`
+        : `NEEDS_HUMAN (score ${input.finalScore.toFixed(2)})`
+
+  const leaf = await store.createLeaf({
+    brainId,
+    kind: 'EVALUATION' as any,
+    status: 'ACTIVE',
+    title: evalTitle,
+    statement:
+      `${input.perspective} perspective: ${verdictLine}. ${input.rationale ?? ''}`.trim(),
+    aliases: [],
+    tags: ['evaluation', 'governance', input.perspective],
+    regionId: objRegion?.id,
+    content: {
+      rubricId: input.rubricId,
+      targetLeafId: input.targetLeafId,
+      perspective: input.perspective,
+      scores: input.scores,
+      finalScore: input.finalScore,
+      verdict: input.verdict,
+      rationale: input.rationale,
+    } as unknown as Record<string, unknown>,
+  })
+
+  if (targetLeaf) {
+    await store.createRelationship({
+      brainId,
+      sourceLeafId: leaf.id,
+      targetLeafId: input.targetLeafId,
+      type: 'EVALUATES',
+    })
+  }
+
+  return leaf
+}
 
 // ── BrainStore → BrainClient adapter ─────────────────────────────────────────
 
-/**
- * Minimal BrainClient adapter over BrainStore.
- *
- * - listExecutableActions: reads TASK/DECISION leaves in ACTIVE status and
- *   converts them to Action objects (the governance loop doesn't use these
- *   directly in our stack — we drive via DebtItems — but the interface requires
- *   it).
- * - getDecision: looks up a DECISION leaf by id or title.
- * - getClassification: looks up a BELIEF leaf tagged "classification".
- * - recordOutcome: updates the originating TASK leaf with outcome content
- *   and creates a BELIEF leaf recording the outcome narrative.
- *
- * Semantics mirror InMemoryBrainClient (see src/BrainClient.ts).
- */
 export function makeBrainClientAdapter(
   store: BrainStore,
   brainId: string,
@@ -69,7 +140,6 @@ export function makeBrainClientAdapter(
     },
 
     async getDecision(name: string): Promise<Decision | null> {
-      // Try by id first, then by title
       const byId = await store.getLeaf(name).catch(() => null)
       if (byId && byId.kind === 'DECISION') {
         return leafToDecision(byId)
@@ -80,7 +150,6 @@ export function makeBrainClientAdapter(
     },
 
     async getClassification(name: string): Promise<Classification | null> {
-      // Classification leaves are BELIEFs tagged "classification"
       const leaves = await store.listLeaves(brainId)
       const found = leaves.find(
         l =>
@@ -107,7 +176,6 @@ export function makeBrainClientAdapter(
     },
 
     async recordOutcome(outcome: Outcome): Promise<void> {
-      // Update the originating TASK leaf with outcome data
       const existing = await store.getLeaf(outcome.itemName).catch(() => null)
       if (existing && existing.kind === 'TASK') {
         await store.updateLeaf(outcome.itemName, {
@@ -123,7 +191,6 @@ export function makeBrainClientAdapter(
         })
       }
 
-      // Also record as a BELIEF leaf for traceability
       const regions = await store.listRegions(brainId)
       const opsRegion = regions.find(r => r.title === 'Operations')
       await store.createLeaf({
@@ -164,14 +231,8 @@ function leafToDecision(leaf: Leaf): Decision {
   return d
 }
 
-// ── ConstitutionGuard for the evolution stack ─────────────────────────────────
+// ── ConstitutionGuard ─────────────────────────────────────────────────────────
 
-/**
- * Classifies evolution work orders:
- * - rfcs/ touching work (SPEC_GAP trigger or target path in rfcs/) → require review
- * - migrated package touching → block
- * - docs/research work → allow
- */
 export function makeConstitutionGuard(): DefaultConstitutionGuard {
   const PROTECTED_PACKAGES = [
     'delphi-core',
@@ -198,7 +259,6 @@ export function makeConstitutionGuard(): DefaultConstitutionGuard {
       const trigger = (item as Action).type ?? ''
       const description = item.description ?? ''
 
-      // Check if description references protected packages
       const touchesProtected = PROTECTED_PACKAGES.some(
         pkg => description.includes(pkg) || tags.includes(pkg),
       )
@@ -211,7 +271,6 @@ export function makeConstitutionGuard(): DefaultConstitutionGuard {
         }
       }
 
-      // SPEC_GAP work or description referencing rfcs/ → require perspective review
       const isSpecWork =
         trigger === 'SPEC_GAP' ||
         description.includes('rfcs/') ||
@@ -226,7 +285,6 @@ export function makeConstitutionGuard(): DefaultConstitutionGuard {
         }
       }
 
-      // docs/ or research/ work → allow with no extra gate
       const isDocsWork =
         description.includes('docs/') ||
         description.includes('research/') ||
@@ -245,19 +303,18 @@ export function makeConstitutionGuard(): DefaultConstitutionGuard {
         }
       }
 
-      return undefined // fall through to default severity logic
+      return undefined
     },
   })
 }
 
-// ── PerspectiveReviewer for RFC review ────────────────────────────────────────
+// ── PerspectiveReviewer ───────────────────────────────────────────────────────
 
-/**
- * Three heuristic perspectives for RFC review.
- * Uses heuristicPerspectiveEvaluator with custom signals plus a
- * "redundancy" perspective that greps rfcs/ for topic overlap.
- */
-export function makePerspectiveReviewer(repoRoot: string): PerspectiveReviewer {
+export function makePerspectiveReviewer(
+  repoRoot: string,
+  store?: BrainStore,
+  brainId?: string,
+): PerspectiveReviewer {
   const BASE_EVALUATOR = heuristicPerspectiveEvaluator({
     signals: {
       'spec-coherence': [
@@ -288,11 +345,51 @@ export function makePerspectiveReviewer(repoRoot: string): PerspectiveReviewer {
     defaultAssessment: 'approve',
   })
 
-  /**
-   * "redundancy" perspective: loads RFC headings from rfcs/ and checks whether
-   * the proposed decision text overlaps with existing RFC headings/phrases.
-   * REJECTs when >3 matching headings/phrases found.
-   */
+  async function loadRubric(title: string): Promise<RubricContent | null> {
+    if (!store || !brainId) {
+      return null
+    }
+    try {
+      const leaf = await getRubricByTitle(store, brainId, title)
+      if (!leaf) {
+        return null
+      }
+      return leaf.content as unknown as RubricContent
+    } catch {
+      return null
+    }
+  }
+
+  function weightedScore(
+    scores: CriterionScore[],
+    rubric: RubricContent,
+  ): number {
+    let total = 0
+    let weightSum = 0
+    for (const cs of scores) {
+      const criterion = rubric.criteria.find(c => c.id === cs.criterionId)
+      if (!criterion) {
+        continue
+      }
+      total += cs.score * criterion.weight
+      weightSum += criterion.weight
+    }
+    return weightSum > 0 ? total / weightSum : 0
+  }
+
+  function scoreToVerdict(
+    finalScore: number,
+    rubric: RubricContent,
+  ): 'approve' | 'reject' | 'needs_human' {
+    if (finalScore >= rubric.qualityGate) {
+      return 'approve'
+    }
+    if (finalScore <= rubric.rejectGate) {
+      return 'reject'
+    }
+    return 'needs_human'
+  }
+
   const redundancyEvaluator = async (input: {
     decision: Decision
     perspective: Perspective
@@ -302,17 +399,36 @@ export function makePerspectiveReviewer(repoRoot: string): PerspectiveReviewer {
       return BASE_EVALUATOR(input)
     }
 
+    const rubric = await loadRubric('RFC Redundancy Rubric')
+    const qualityGate = rubric?.qualityGate ?? 0.7
+    const rejectGate = rubric?.rejectGate ?? 0.4
+
     const rfcsDir = resolve(repoRoot, 'rfcs')
     if (!existsSync(rfcsDir)) {
+      const noOverlapScore: CriterionScore[] = rubric
+        ? [
+            {
+              criterionId: 'topic-overlap',
+              score: 1,
+              rationale: 'rfcs/ dir not found — cannot check for redundancy',
+            },
+            {
+              criterionId: 'novel-content',
+              score: 1,
+              rationale: 'rfcs/ dir not found — novel by default',
+            },
+          ]
+        : []
       return {
         perspective: 'redundancy',
         assessment: 'approve' as const,
         confidence: 0.5,
         concerns: ['rfcs/ dir not found — cannot check for redundancy.'],
+        criterionScores: noOverlapScore,
+        finalScore: 1,
       }
     }
 
-    // Gather headings from all RFC files
     let files: string[] = []
     try {
       files = (await readdir(rfcsDir))
@@ -324,6 +440,8 @@ export function makePerspectiveReviewer(repoRoot: string): PerspectiveReviewer {
         assessment: 'approve' as const,
         confidence: 0.5,
         concerns: [],
+        criterionScores: [] as CriterionScore[],
+        finalScore: 1,
       }
     }
 
@@ -335,7 +453,6 @@ export function makePerspectiveReviewer(repoRoot: string): PerspectiveReviewer {
       .join(' ')
       .toLowerCase()
 
-    // Extract words of 5+ chars from decision text as topic signals
     const topicWords = [
       ...new Set(
         decisionText
@@ -369,7 +486,44 @@ export function makePerspectiveReviewer(repoRoot: string): PerspectiveReviewer {
       }
     }
 
-    if (matchCount > 3) {
+    const overlapScore =
+      matchCount > 3
+        ? Math.max(0, 1 - matchCount / (matchCount + 5))
+        : matchCount > 0
+          ? 0.6
+          : 1.0
+
+    const novelScore = 1 - overlapScore
+
+    const criterionScores: CriterionScore[] = rubric
+      ? [
+          {
+            criterionId: 'topic-overlap',
+            score: overlapScore,
+            rationale:
+              matchCount > 3
+                ? `${matchCount} heading matches in ${matchedIn.slice(0, 3).join(', ')}`
+                : `${matchCount} matches — below threshold`,
+          },
+          {
+            criterionId: 'novel-content',
+            score: novelScore,
+            rationale: `Novel content ratio derived from overlap (${((1 - overlapScore) * 100).toFixed(0)}% novel)`,
+          },
+        ]
+      : []
+
+    const finalScore = rubric
+      ? weightedScore(criterionScores, rubric)
+      : overlapScore
+
+    const verdict = rubric
+      ? scoreToVerdict(finalScore, rubric)
+      : matchCount > 3
+        ? 'reject'
+        : 'approve'
+
+    if (verdict === 'reject' || matchCount > 3) {
       return {
         perspective: 'redundancy',
         assessment: 'reject' as const,
@@ -378,28 +532,185 @@ export function makePerspectiveReviewer(repoRoot: string): PerspectiveReviewer {
           `Topic overlap detected with existing RFCs (${matchCount} heading matches in: ${matchedIn.slice(0, 3).join(', ')}). This RFC may duplicate existing coverage.`,
         ],
         rationale: `Matched ${matchCount} heading patterns across ${matchedIn.length} RFC files.`,
+        criterionScores,
+        finalScore,
+        qualityGate,
+        rejectGate,
       }
     }
 
     return {
       perspective: 'redundancy',
-      assessment: 'approve' as const,
+      assessment: (verdict === 'needs_human' ? 'concerns' : 'approve') as
+        | 'approve'
+        | 'concerns',
       confidence: 0.75,
       concerns: [],
       rationale: `No significant heading overlap found (${matchCount} matches, threshold >3).`,
+      criterionScores,
+      finalScore,
+      qualityGate,
+      rejectGate,
     }
   }
 
-  // Combined evaluator: route to redundancy checker or base heuristic
+  const specCoherenceEvaluator = async (input: {
+    decision: Decision
+    perspective: Perspective
+    context?: string
+  }) => {
+    if (input.perspective.name !== 'spec-coherence') {
+      return BASE_EVALUATOR(input)
+    }
+
+    const rubric = await loadRubric('Spec Coherence Rubric')
+    const baseResult = await BASE_EVALUATOR(input)
+
+    if (!rubric) {
+      return baseResult
+    }
+
+    const descLower = (input.decision.description ?? '').toLowerCase()
+    const ctxLower = (input.decision.context ?? '').toLowerCase()
+    const combined = `${descLower} ${ctxLower}`
+
+    const indexReferenced =
+      combined.includes('rfc-9999') || combined.includes('specification index')
+        ? 1
+        : 0.3
+
+    const hasStatus = combined.includes('status')
+    const hasPurpose = combined.includes('purpose')
+    const hasCanonical = combined.includes('canonical')
+    const styleScore =
+      (hasStatus ? 0.33 : 0) +
+      (hasPurpose ? 0.33 : 0) +
+      (hasCanonical ? 0.34 : 0)
+
+    const depsDeclared =
+      combined.includes('depends on') || combined.includes('dependencies')
+        ? 1
+        : 0.3
+
+    const criterionScores: CriterionScore[] = [
+      {
+        criterionId: 'index-referenced',
+        score: indexReferenced,
+        rationale:
+          indexReferenced === 1
+            ? 'RFC-9999 reference found'
+            : 'No RFC-9999 reference found',
+      },
+      {
+        criterionId: 'house-style',
+        score: styleScore,
+        rationale: `House style score: status=${hasStatus} purpose=${hasPurpose} canonical=${hasCanonical}`,
+      },
+      {
+        criterionId: 'dependencies-declared',
+        score: depsDeclared,
+        rationale:
+          depsDeclared === 1
+            ? 'Dependencies section found'
+            : 'No dependencies section found',
+      },
+    ]
+
+    const finalScore = weightedScore(criterionScores, rubric)
+    const verdict = scoreToVerdict(finalScore, rubric)
+
+    return {
+      ...baseResult,
+      criterionScores,
+      finalScore,
+      qualityGate: rubric.qualityGate,
+      rejectGate: rubric.rejectGate,
+      verdict,
+    }
+  }
+
+  const scopeEvaluator = async (input: {
+    decision: Decision
+    perspective: Perspective
+    context?: string
+  }) => {
+    if (input.perspective.name !== 'scope') {
+      return BASE_EVALUATOR(input)
+    }
+
+    const rubric = await loadRubric('Change Scope Rubric')
+    const baseResult = await BASE_EVALUATOR(input)
+
+    if (!rubric) {
+      return baseResult
+    }
+
+    const PROTECTED_PACKAGES_PATHS = [
+      'packages/delphi-core',
+      'packages/delphi-ai',
+      'packages/delphi-governance',
+      'packages/delphi-brain',
+      'packages/delphi-langgraph',
+      'packages/delphi-sandbox',
+      'realtime-broker',
+    ]
+
+    const descLower = (input.decision.description ?? '').toLowerCase()
+    const ctxLower = (input.decision.context ?? '').toLowerCase()
+    const combined = `${descLower} ${ctxLower}`
+
+    const touchesProtected = PROTECTED_PACKAGES_PATHS.some(p =>
+      combined.includes(p.toLowerCase()),
+    )
+
+    const allowedPathsScore = touchesProtected ? 0 : 1
+    const noPublishedEditsScore = touchesProtected ? 0 : 1
+
+    const criterionScores: CriterionScore[] = [
+      {
+        criterionId: 'allowed-paths',
+        score: allowedPathsScore,
+        rationale: touchesProtected
+          ? 'Diff touches a protected (migrated) package path'
+          : 'No protected package paths detected',
+      },
+      {
+        criterionId: 'no-published-package-edits',
+        score: noPublishedEditsScore,
+        rationale: touchesProtected
+          ? 'Published package edits detected'
+          : 'No published package edits detected',
+      },
+    ]
+
+    const finalScore = weightedScore(criterionScores, rubric)
+    const verdict = scoreToVerdict(finalScore, rubric)
+
+    return {
+      ...baseResult,
+      criterionScores,
+      finalScore,
+      qualityGate: rubric.qualityGate,
+      rejectGate: rubric.rejectGate,
+      verdict,
+    }
+  }
+
   const combinedEvaluator = async (input: {
     decision: Decision
     perspective: Perspective
     context?: string
   }) => {
-    if (input.perspective.name === 'redundancy') {
-      return redundancyEvaluator(input)
+    switch (input.perspective.name) {
+      case 'redundancy':
+        return redundancyEvaluator(input)
+      case 'spec-coherence':
+        return specCoherenceEvaluator(input)
+      case 'scope':
+        return scopeEvaluator(input)
+      default:
+        return BASE_EVALUATOR(input)
     }
-    return BASE_EVALUATOR(input)
   }
 
   return new PerspectiveReviewer({
@@ -409,7 +720,6 @@ export function makePerspectiveReviewer(repoRoot: string): PerspectiveReviewer {
 
 /** Common English stop-words to exclude from topic matching. */
 const STOP_WORDS = new Set([
-  // English function words
   'about',
   'after',
   'again',
@@ -442,7 +752,6 @@ const STOP_WORDS = new Set([
   'below',
   'above',
   'since',
-  // Delphi domain-generic words (appear in nearly every RFC heading)
   'brain',
   'brains',
   'delphi',
@@ -499,6 +808,8 @@ const STOP_WORDS = new Set([
   'delta',
 ])
 
+// Note: thresholds here are fallbacks; rubric-loaded quality/reject gates
+// take precedence in each perspective evaluator when a BrainStore is provided.
 export function makeReviewDecider(): DefaultReviewDecider {
   return new DefaultReviewDecider({
     approveThreshold: 0.7,

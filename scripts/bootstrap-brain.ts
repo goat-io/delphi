@@ -14,6 +14,7 @@ import {
 import { ingestFile } from '@goatlab/delphi-ingestion'
 import { BrainStore, createDb, migrate } from '@goatlab/delphi-knowledge'
 import { seedGoals } from './goals.js'
+import { seedRubrics } from './rubrics.js'
 
 const SEEDED_REGIONS = [
   'Spec',
@@ -245,6 +246,11 @@ export async function bootstrapBrain(opts: {
   const goalLeaves = await seedGoals(store, brainId)
   log(
     `[bootstrap] Goals seeded: ${goalLeaves.length} goal leaves in "Objectives"`,
+  )
+
+  const rubricLeaves = await seedRubrics(store, brainId)
+  log(
+    `[bootstrap] Rubrics seeded: ${rubricLeaves.length} rubric leaves in "Objectives"`,
   )
 
   // 4f. Archive RFC-template boilerplate questions (title < 30 chars) — not real open questions.
