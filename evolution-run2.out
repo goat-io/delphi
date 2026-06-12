@@ -16,3 +16,46 @@ Running agent (executor=pty)...
 script: tcgetattr/ioctl: Operation not supported on socket
 
 Gate GREEN
+[main dc5dd2c] evolve(cycle 1): [SPEC_GAP] Candidate
+ Committer: Ignacio Cabrera <igca@Ignacios-MacBook-Pro-2.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 1 file changed, 18 insertions(+)
+ create mode 100644 evolution-run2.out
+
+Running pnpm brain:bootstrap...
+$ tsx scripts/bootstrap-brain.ts
+[bootstrap] Reusing existing brain: brain_8c16f71c024d4c8c999e18b1
+[bootstrap] Regions: Spec, Knowledge Plane, Execution Plane, Decisions, Operations
+[bootstrap] Ingesting 35 RFC files → "Spec"
+[bootstrap] Ingesting 2 ops files → "Operations"
+[bootstrap] Ingesting 8 knowledge-plane READMEs → "Knowledge Plane"
+[bootstrap] Ingesting 7 execution-plane docs → "Execution Plane"
+[bootstrap] Detecting hub regions...
+[bootstrap] Generating indexes (stale only)...
+[bootstrap] Generating maps...
+
+[bootstrap] Index summaries:
+  [Spec] Spec: 825 leaves, 437 beliefs, 178 open questions.
+
+[bootstrap] Health:
+  leaves:        981
+  beliefs:       560
+  evidence:      1756
+  relationships: 40
+  staleIndexes:  0
+  openQuestions: 179
+
+[bootstrap] Totals: created=0 merged=27 skippedAssets=51
+
+Closure: UNVERIFIED
