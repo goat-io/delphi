@@ -31,6 +31,7 @@ import {
   makeReviewDecider,
   persistEvaluation,
 } from './governance-bridge.js'
+import { getRubricByTitle } from './rubrics.js'
 
 // ── Trigger input (what we pass to engine.start()) ────────────────────────────
 
@@ -415,20 +416,70 @@ export class GateStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
       const currentLines = gitPorcelain(cwd)
       await rollback(cwd, state.snapshotLines ?? [], currentLines)
       await markTaskDisputed(state.taskId!, 'gate red after fix attempt')
-      writeState(cwd, runId, {
-        gateGreenResult: false,
-        gateOutput,
-        disputed: true,
-      })
-      return doneOutput(runId, input.cycle)
+    } else {
+      console.log(`[gate] pid=${process.pid} GREEN`)
     }
 
-    console.log(`[gate] pid=${process.pid} GREEN`)
     writeState(cwd, runId, {
-      gateGreenResult: true,
+      gateGreenResult: green,
       gateOutput,
-      disputed: false,
+      disputed: !green,
     })
+
+    // Persist EVALUATION leaf against the Verification Gate Rubric (best-effort).
+    if (state.taskId) {
+      const dataDir = resolve(
+        cwd,
+        process.env.DELPHI_DATA_DIR ?? '.delphi/brain',
+      )
+      const evalDb = await createDb({ dataDir })
+      await migrate(evalDb)
+      const evalStore = new BrainStore(evalDb)
+      try {
+        const brain = await evalStore.getBrainByName('delphi').catch(() => null)
+        if (brain) {
+          const rubric = await getRubricByTitle(
+            evalStore,
+            brain.id,
+            'Verification Gate Rubric',
+          ).catch(() => null)
+          const rubricId = rubric?.id ?? 'verification-gate-rubric'
+          const criterionScore = green ? 1.0 : 0.0
+          await persistEvaluation(evalStore, brain.id, {
+            rubricId,
+            targetLeafId: state.taskId,
+            perspective: 'verification-gate',
+            scores: [
+              {
+                criterionId: 'typecheck',
+                score: criterionScore,
+                rationale: green ? 'typecheck passed' : 'gate failed',
+              },
+              {
+                criterionId: 'lint',
+                score: criterionScore,
+                rationale: green ? 'lint passed' : 'gate failed',
+              },
+              {
+                criterionId: 'tests',
+                score: criterionScore,
+                rationale: green ? 'tests passed' : 'gate failed',
+              },
+            ],
+            finalScore: criterionScore,
+            verdict: green ? 'approve' : 'reject',
+            rationale: green
+              ? 'Verification gate GREEN'
+              : `Verification gate RED: ${gateOutput.slice(0, 200)}`,
+          }).catch(() => {
+            /* best-effort */
+          })
+        }
+      } finally {
+        await evalDb.close()
+      }
+    }
+
     return doneOutput(runId, input.cycle)
   }
 }

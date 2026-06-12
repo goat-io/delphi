@@ -106,6 +106,38 @@ const STANDING_RUBRICS: Array<{ title: string; content: RubricContent }> = [
       rejectGate: 0.4,
     },
   },
+  {
+    title: 'Verification Gate Rubric',
+    content: {
+      criteria: [
+        {
+          id: 'typecheck',
+          name: 'TypeScript typecheck',
+          description: 'pnpm typecheck exits 0 (no type errors)',
+          weight: 0.34,
+          scoringRange: { min: 0, max: 1 },
+        },
+        {
+          id: 'lint',
+          name: 'Biome lint',
+          description: 'pnpm lint:check exits 0 (no lint violations)',
+          weight: 0.33,
+          scoringRange: { min: 0, max: 1 },
+        },
+        {
+          id: 'tests',
+          name: 'Vitest tests',
+          description: 'pnpm test exits 0 (all tests pass)',
+          weight: 0.33,
+          scoringRange: { min: 0, max: 1 },
+        },
+      ],
+      scoringMethod: 'PASS_FAIL',
+      qualityGate: 1.0,
+      rejectGate: 0.5,
+      derivedFrom: ['RFC-0005'],
+    },
+  },
 ]
 
 // ── seedRubrics ───────────────────────────────────────────────────────────────

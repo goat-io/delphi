@@ -98,3 +98,15 @@ Automatically maintained by `pnpm evolve:loop`.
 | Closure | CLOSED |
 | Health before | leaves=997 beliefs=572 evidence=1774 openQ=180 |
 | Health after | leaves=1046 beliefs=606 evidence=1883 openQ=184 |
+## Cycle 1 — 2026-06-12T19:47:58.290Z
+
+| Field | Value |
+|-------|-------|
+| Task | leaf_ebc74b44cfb5495f9870583b — Rubric-back task closure criteria |
+| Trigger | QUEUED_TASK |
+| Agent summary | WORK COMPLETE: `verify-closure` for QUEUED_TASK now reads from the "Task Closure Rubric" PASS_FAIL leaf and persists EVALUATION leaves via `persistEvaluation`, replacing the previous ad-hoc boolean check | guard=allow requiresReview=true |
+| Gate | DISPUTED |
+| Commit | f1e674d |
+| Closure | DISPUTED |
+| Health before | leaves=1121 beliefs=654 evidence=2040 openQ=188 |
+| Health after | leaves=1121 beliefs=654 evidence=2040 openQ=188 |

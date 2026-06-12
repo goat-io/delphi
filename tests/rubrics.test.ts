@@ -39,10 +39,10 @@ afterAll(async () => {
 describe('rubrics', () => {
   it('1. seedRubrics is idempotent and criteria weights sum to 1.0', async () => {
     const first = await seedRubrics(store, brainId)
-    expect(first.length).toBe(3)
+    expect(first.length).toBe(4)
 
     const second = await seedRubrics(store, brainId)
-    expect(second.length).toBe(3)
+    expect(second.length).toBe(4)
 
     for (let i = 0; i < first.length; i++) {
       expect(first[i]!.id).toBe(second[i]!.id)
@@ -53,6 +53,24 @@ describe('rubrics', () => {
       const weightSum = content.criteria.reduce((s, c) => s + c.weight, 0)
       expect(weightSum).toBeCloseTo(1.0, 5)
     }
+  })
+
+  it('1b. Verification Gate Rubric seeded with PASS_FAIL scoring and 3 criteria', async () => {
+    const rubric = await getRubricByTitle(
+      store,
+      brainId,
+      'Verification Gate Rubric',
+    )
+    expect(rubric).not.toBeNull()
+
+    const content = rubric!.content as unknown as RubricContent
+    expect(content.scoringMethod).toBe('PASS_FAIL')
+    expect(content.qualityGate).toBe(1.0)
+    expect(content.criteria).toHaveLength(3)
+    const ids = content.criteria.map(c => c.id)
+    expect(ids).toContain('typecheck')
+    expect(ids).toContain('lint')
+    expect(ids).toContain('tests')
   })
 
   it('2. Scoring respects weights: modified rubric weight → different finalScore', async () => {
