@@ -46,6 +46,10 @@ const STANDING_GOALS: Array<{
     title: 'Average confidence above 0.5',
     content: { metric: 'avgConfidence', target: 0.5, comparator: '>=' },
   },
+  {
+    title: 'No unattended loop anomalies',
+    content: { metric: 'loopAnomalies', target: 0, comparator: '==' },
+  },
 ]
 
 // ── seedGoals ────────────────────────────────────────────────────────────────
@@ -129,6 +133,19 @@ export async function evaluateGoals(
         return health.openQuestions
       case 'avgConfidence':
         return health.avgConfidence ?? 0
+      case 'loopAnomalies':
+        // Metric counts ACTIVE loop-defect tasks tagged 'auto-detected'.
+        // Fresh anomaly scan deduplication means this is a reliable proxy:
+        // emitDefectTasks creates at most one ACTIVE task per anomaly class,
+        // so the count here accurately reflects unattended loop anomaly classes.
+        // We avoid importing scanLoopAnomalies here to prevent a circular dep
+        // (goals.ts ← evolve.ts ← introspect would cycle back through goals.ts).
+        return leaves.filter(
+          l =>
+            l.kind === 'TASK' &&
+            l.status === 'ACTIVE' &&
+            (l.tags ?? []).includes('auto-detected'),
+        ).length
       default:
         return 0
     }

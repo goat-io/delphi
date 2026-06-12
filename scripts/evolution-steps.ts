@@ -10,7 +10,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { StepExecutionContext } from '@goatlab/delphi-core'
 import { FunctionStep, step, Workflow } from '@goatlab/delphi-core'
-import type { Decision, Perspective } from '@goatlab/delphi-governance'
+import type { Decision } from '@goatlab/delphi-governance'
 import { BrainStore, createDb, migrate } from '@goatlab/delphi-knowledge'
 import {
   appendCycleLog,
@@ -25,11 +25,14 @@ import {
   runGate,
 } from './evolution-loop.js'
 import { buildWorkPrompt, createTaskFromDebt, scanDebt } from './evolve.js'
+import type { ArbiterRunner } from './governance-bridge.js'
 import {
   makeConstitutionGuard,
   makePerspectiveReviewer,
   makeReviewDecider,
   persistEvaluation,
+  perspectivesForWorkClass,
+  runArbiter,
 } from './governance-bridge.js'
 import { getRubricByTitle } from './rubrics.js'
 
@@ -139,6 +142,10 @@ async function markTaskDisputed(taskId: string, reason: string): Promise<void> {
     await db.close()
   }
 }
+
+// Note: markTaskProposed (HITL gate) removed — inside-boundary escalation
+// now routes to the ARBITER AGENT (see ReviewStep), not a human.
+// If the arbiter rejects, the task is marked DISPUTED (existing path).
 
 // ── Step 1: scan ─────────────────────────────────────────────────────────────
 
@@ -486,14 +493,28 @@ export class GateStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
 
 // ── Step 4b: review ───────────────────────────────────────────────────────────
 // After gate (gate GREEN), before commit.
-// For work orders flagged guardRequiresReview=true (spec/RFC work):
-//   run PerspectiveReviewer → if REJECT → rollback + task DISPUTED.
-//   if APPROVE → proceed; verdict recorded in state + later in log.
-// Allow-class work: no review, passes through.
+//
+// Work class routing (The Human Boundary / CONSTITUTION.md):
+//   - code work (QUEUED_TASK, non-rfc): runs change-scope + spec-coherence only.
+//     redundancy perspective MUST NOT score code diffs.
+//   - rfc-touching work (SPEC_GAP / rfcs/): runs all three incl. redundancy.
+//
+// Verdict handling:
+//   - approved  → proceed to commit
+//   - rejected  → rollback + task DISPUTED (existing path)
+//   - needs_human / inconclusive (score 0.30–0.70) →
+//       route to ARBITER AGENT (inside-boundary escalation, NOT human):
+//       APPROVE → proceed; REJECT → rollback + DISPUTED
+//       Arbiter verdict persisted as EVALUATION leaf (perspective "arbiter")
+//
+// `arbiterRunner` is injectable for unit testing (defaults to runArbiter).
 
 export class ReviewStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
   readonly stepName = 'review' as const
   override retries = 0
+
+  // Injectable arbiter runner — set in tests to a stub
+  arbiterRunner: ArbiterRunner = runArbiter
 
   async handle(input: DoneJsonObject, _ctx: StepExecutionContext) {
     const cwd = process.cwd()
@@ -509,7 +530,7 @@ export class ReviewStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
       return doneOutput(runId, input.cycle)
     }
 
-    // Skip review for allow-class work (no RFC involvement)
+    // Skip review for allow-class work (docs/research/maintenance — no review required)
     if (!state.guardRequiresReview) {
       writeState(cwd, runId, {
         reviewOutcome: 'skipped',
@@ -532,11 +553,22 @@ export class ReviewStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
       decision.context = state.prompt.slice(0, 500)
     }
 
-    const perspectives: Perspective[] = [
-      { name: 'redundancy', weight: 2 },
-      { name: 'spec-coherence', weight: 1 },
-      { name: 'scope', weight: 2 },
-    ]
+    // Select perspectives by work class:
+    //   SPEC_GAP / rfcs-touching → rfc class (includes redundancy)
+    //   QUEUED_TASK → code class (change-scope + spec-coherence only; NO redundancy)
+    const trigger = state.trigger ?? ''
+    const detail = state.detail ?? ''
+    const isRfcWork =
+      trigger === 'SPEC_GAP' ||
+      detail.includes('rfcs/') ||
+      (decision.tags ?? []).includes('spec') ||
+      (decision.tags ?? []).includes('rfc')
+    const workClass = isRfcWork ? 'rfc' : 'code'
+    const perspectives = perspectivesForWorkClass(workClass)
+
+    console.log(
+      `[review] pid=${process.pid} workClass=${workClass} perspectives=[${perspectives.map(p => p.name).join(',')}]`,
+    )
 
     const reviewer = makePerspectiveReviewer(cwd)
     const decider = makeReviewDecider()
@@ -545,54 +577,45 @@ export class ReviewStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
     const reviewDecision = decider.decide(matrix, perspectives)
 
     // Persist one EVALUATION leaf per perspective (best-effort — don't block the cycle)
-    {
-      const dataDir = resolve(
-        cwd,
-        process.env.DELPHI_DATA_DIR ?? '.delphi/brain',
-      )
-      const evalDb = await createDb({ dataDir })
-      await migrate(evalDb)
-      const evalStore = new BrainStore(evalDb)
-      try {
-        const brain = await evalStore.getBrainByName('delphi').catch(() => null)
-        if (brain && state.taskId) {
-          const evalBrainId = brain.id
-          for (const verdict of matrix.verdicts) {
-            const cs = (verdict as any).criterionScores ?? []
-            const fs =
-              typeof (verdict as any).finalScore === 'number'
-                ? (verdict as any).finalScore
-                : verdict.assessment === 'approve'
-                  ? 0.8
-                  : verdict.assessment === 'reject'
-                    ? 0.2
-                    : 0.5
-            const evalVerdict:
-              | 'approve'
-              | 'reject'
-              | 'needs_human'
-              | 'neutral' =
-              verdict.assessment === 'approve'
-                ? 'approve'
+    const dataDir = resolve(cwd, process.env.DELPHI_DATA_DIR ?? '.delphi/brain')
+    const evalDb = await createDb({ dataDir })
+    await migrate(evalDb)
+    const evalStore = new BrainStore(evalDb)
+    try {
+      const brain = await evalStore.getBrainByName('delphi').catch(() => null)
+      if (brain && state.taskId) {
+        const evalBrainId = brain.id
+        for (const verdict of matrix.verdicts) {
+          const cs = (verdict as any).criterionScores ?? []
+          const fs =
+            typeof (verdict as any).finalScore === 'number'
+              ? (verdict as any).finalScore
+              : verdict.assessment === 'approve'
+                ? 0.8
                 : verdict.assessment === 'reject'
-                  ? 'reject'
-                  : 'needs_human'
-            await persistEvaluation(evalStore, evalBrainId, {
-              rubricId: `${verdict.perspective}-rubric`,
-              targetLeafId: state.taskId,
-              perspective: verdict.perspective,
-              scores: cs,
-              finalScore: fs,
-              verdict: evalVerdict,
-              rationale: (verdict.concerns ?? []).join('; '),
-            }).catch(() => {
-              /* best-effort */
-            })
-          }
+                  ? 0.2
+                  : 0.5
+          const evalVerdict: 'approve' | 'reject' | 'needs_human' | 'neutral' =
+            verdict.assessment === 'approve'
+              ? 'approve'
+              : verdict.assessment === 'reject'
+                ? 'reject'
+                : 'needs_human'
+          await persistEvaluation(evalStore, evalBrainId, {
+            rubricId: `${verdict.perspective}-rubric`,
+            targetLeafId: state.taskId,
+            perspective: verdict.perspective,
+            scores: cs,
+            finalScore: fs,
+            verdict: evalVerdict,
+            rationale: (verdict.concerns ?? []).join('; '),
+          }).catch(() => {
+            /* best-effort */
+          })
         }
-      } finally {
-        await evalDb.close()
       }
+    } finally {
+      await evalDb.close()
     }
 
     console.log(
@@ -615,12 +638,100 @@ export class ReviewStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
       )
       writeState(cwd, runId, {
         disputed: true,
-        gateGreenResult: false, // prevent commit
+        gateGreenResult: false,
       })
       return doneOutput(runId, input.cycle)
     }
 
-    // approved or needs_human — proceed (log the verdict)
+    if (reviewDecision.outcome === 'needs_human') {
+      // Inside-boundary escalation: route to ARBITER AGENT, not a human.
+      // The Human Boundary constitution: human approval only for actions that
+      // affect other humans. Everything inside this repo resolves via arbiter.
+      console.warn(
+        `[review] NEEDS_HUMAN (score ${reviewDecision.score.toFixed(2)}) — escalating to ARBITER AGENT (inside-boundary, no human needed).`,
+      )
+
+      const rubricScoresSummary = matrix.verdicts
+        .map(
+          v =>
+            `${v.perspective}: ${v.assessment} confidence=${v.confidence?.toFixed(2) ?? 'n/a'} concerns=[${(v.concerns ?? []).join('; ')}]`,
+        )
+        .join('\n')
+
+      const arbiterInput = {
+        workOrder: `Task: ${state.taskId}\nTrigger: ${trigger}\nDetail: ${detail}\nPrompt excerpt: ${(state.prompt ?? '').slice(0, 400)}`,
+        rubricScoresSummary,
+        diffSummary: `Changed files: ${(state.changedFiles ?? []).join(', ')}`,
+      }
+
+      const arbiterVerdict = await this.arbiterRunner(arbiterInput)
+
+      console.log(
+        `[review] ARBITER verdict=${arbiterVerdict.outcome} rationale="${arbiterVerdict.rationale}"`,
+      )
+
+      // Persist arbiter verdict as EVALUATION leaf
+      const arbiterDb = await createDb({ dataDir })
+      await migrate(arbiterDb)
+      const arbiterStore = new BrainStore(arbiterDb)
+      try {
+        const arbiterBrain = await arbiterStore
+          .getBrainByName('delphi')
+          .catch(() => null)
+        if (arbiterBrain && state.taskId) {
+          await persistEvaluation(arbiterStore, arbiterBrain.id, {
+            rubricId: 'arbiter-escalation',
+            targetLeafId: state.taskId,
+            perspective: 'arbiter',
+            scores: [
+              {
+                criterionId: 'arbiter-ruling',
+                score: arbiterVerdict.outcome === 'APPROVE' ? 1.0 : 0.0,
+                rationale: arbiterVerdict.rationale,
+              },
+            ],
+            finalScore: arbiterVerdict.outcome === 'APPROVE' ? 1.0 : 0.0,
+            verdict:
+              arbiterVerdict.outcome === 'APPROVE' ? 'approve' : 'reject',
+            rationale: `Arbiter escalation (inside-boundary): ${arbiterVerdict.rationale}`,
+          }).catch(() => {
+            /* best-effort */
+          })
+        }
+      } finally {
+        await arbiterDb.close()
+      }
+
+      if (arbiterVerdict.outcome === 'APPROVE') {
+        // Arbiter approved — proceed to commit
+        writeState(cwd, runId, {
+          reviewOutcome: 'approved',
+          reviewReasons: [
+            ...reviewDecision.reasons,
+            `Arbiter APPROVED: ${arbiterVerdict.rationale}`,
+          ],
+        })
+        return doneOutput(runId, input.cycle)
+      }
+
+      // Arbiter rejected — rollback + DISPUTED path
+      console.error(
+        `[review] ARBITER REJECTED — rolling back. Rationale: ${arbiterVerdict.rationale}`,
+      )
+      const currentLines = gitPorcelain(cwd)
+      await rollback(cwd, state.snapshotLines ?? [], currentLines)
+      await markTaskDisputed(
+        state.taskId!,
+        `Arbiter escalation rejected (score ${reviewDecision.score.toFixed(2)}): ${arbiterVerdict.rationale}. Perspective scores: ${rubricScoresSummary}`,
+      )
+      writeState(cwd, runId, {
+        disputed: true,
+        gateGreenResult: false,
+      })
+      return doneOutput(runId, input.cycle)
+    }
+
+    // approved — proceed
     return doneOutput(runId, input.cycle)
   }
 }

@@ -161,20 +161,74 @@ is suppressed when EMPTY_REGION items already exist (deduplication
 prevents double work orders).
 
 Every cycle passes through a **ConstitutionGuard** step (`guard`,
-after create-task) built in `scripts/governance-bridge.ts`:
+after create-task) built in `scripts/governance-bridge.ts` and
+driven by the **The Human Boundary** policy in `CONSTITUTION.md`
+and `scripts/constitution.ts`:
 docs/research/maintenance work → **allow**; rfcs/-touching or
-SPEC_GAP work → **require perspective review**; any work touching
-a migrated package → **block**. A blocked work order marks the
-task DISPUTED and ends the cycle.
+SPEC_GAP work → **allow + perspective review** (agent-side, not human);
+QUEUED_TASK code work → **allow + change-scope/spec-coherence review**;
+any work touching a migrated/published package → **block** (published
+consumers = humans). A blocked work order marks the task DISPUTED and
+ends the cycle. Human approval is required ONLY for actions outside
+the boundary (npm-publish, external-pr, email, etc.).
+
+Perspective selection by work class: code work (QUEUED_TASK, non-rfc
+diffs) runs `scope` + `spec-coherence` only — the `redundancy`
+perspective MUST NOT score code diffs. RFC/spec work runs all three
+perspectives including `redundancy`.
 
 For review-required work, a **PerspectiveReviewer** step (`review`,
-after gate) runs three perspectives: `redundancy` (greps rfcs/
-headings for topic overlap), `spec-coherence`, and `scope`. A
-REJECT verdict rolls back cycle changes, marks the task DISPUTED,
-and records the full tradeoff matrix in the task content. The
-verdict (outcome, score, reasons) is appended to every
-`evolution.log.md` cycle entry.
-Perspectives are rubric-backed (RFC-0005): each loads a RUBRIC leaf, scores per criterion with weights, verdicts derive from rubric quality gates, results persist as EVALUATION leaves with EVALUATES edges.
+after gate) runs the selected perspectives. A REJECT verdict rolls back
+cycle changes, marks the task DISPUTED, and records the full tradeoff
+matrix. A `needs_human` / inconclusive verdict (score 0.30–0.70) routes
+to an **ARBITER AGENT** (model: ARBITER_MODEL env, default
+`claude-opus-4-8`) — NOT to a human. The arbiter issues a binding
+APPROVE or REJECT with a 2-sentence rationale; its verdict is persisted
+as an EVALUATION leaf (perspective "arbiter"). Arbiter failure/timeout
+(5 min) → conservative REJECT. Human escalation is reserved exclusively
+for actions at or beyond The Human Boundary.
+Perspectives are rubric-backed (RFC-0005): each loads a RUBRIC leaf,
+scores per criterion with weights, verdicts derive from rubric quality
+gates, results persist as EVALUATION leaves with EVALUATES edges.
+
+## Self-healing (implemented)
+
+`scripts/introspect.ts::scanLoopAnomalies` codifies the previously human role of
+reviewing past run records. It scans two sources:
+
+1. **Brain signals**: DISPUTED TASK leaves, TASK leaves with `content.unverified`,
+   and EVALUATION leaves whose verdict/outcome is `needs_human` with no follow-up
+   DECISION linked to the same target.
+2. **evolution.log.md records**: RED gate cycles → `ROLLBACK` anomaly; SKIPPED
+   gate / empty-cycle → `EMPTY_CYCLE`; DISPUTED closure → `DISPUTED_TASK`;
+   repeated RED for the same task → `GATE_RED_TWICE`.
+
+`emitDefectTasks` converts each anomaly into a QUEUED TASK leaf (region Operations,
+priority 92, tags `['loop-defect','auto-detected']`). Two-level deduplication:
+exact-signature (any existing task whose `content.target` matches the anomaly
+signature is skipped) and class-level (one active auto-detected task per anomaly
+kind at a time). Cap: max 5 active auto-detected tasks at any time, preventing
+runaway defect accumulation.
+
+`scanDebt` calls `scanLoopAnomalies + emitDefectTasks` as its first action so
+freshly detected defect tasks surface as QUEUED_TASK items in the same scan —
+the agent works them without needing a human to queue them.
+
+A **meta-goal** "No unattended loop anomalies" (`metric: loopAnomalies, target: 0,
+comparator: ==`) is seeded alongside the standing goals. `evaluateGoals` computes
+the metric as the count of ACTIVE tasks tagged `auto-detected`. This keeps defect
+tasks prioritised at goal-gap priority (90) until resolved.
+
+`scripts/evolution-daemon.ts` (`pnpm evolve:daemon`) provides scheduled continuity:
+it loops forever, running one evolution cycle per tick via the same in-process
+`EvolutionCycleWorkflow` the `evolve:engine` command uses, then sleeping
+`EVOLVE_INTERVAL_MIN` minutes (default 30). Daily budget: `EVOLVE_MAX_CYCLES_PER_DAY`
+(default 12); when exhausted it sleeps until the next UTC day. When no actionable
+debt is found it sleeps 4 hours. Responds to SIGINT/SIGTERM with graceful shutdown
+(finishes the current cycle). All tick outcomes are appended to evolution.log.md.
+
+**Human involvement is reduced to Constitution-mandated `needs_human` escalations.**
+All other anomaly detection, defect queuing, and cycle scheduling are autonomous.
 
 ---
 

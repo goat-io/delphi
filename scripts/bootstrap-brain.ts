@@ -150,9 +150,9 @@ export async function bootstrapBrain(opts: {
     }
   }
 
-  // 4b. AGENTS.md + README.md → "Operations"
+  // 4b. AGENTS.md + README.md + CONSTITUTION.md → "Operations"
   const opsRegionId = regionMap.get('Operations')!
-  const opsFiles = ['AGENTS.md', 'README.md']
+  const opsFiles = ['AGENTS.md', 'README.md', 'CONSTITUTION.md']
     .map(f => resolve(repoRoot, f))
     .filter(existsSync)
 

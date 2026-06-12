@@ -5,6 +5,7 @@ import { BrainStore, createDb, migrate } from '@goatlab/delphi-knowledge'
 import type { Leaf } from '@goatlab/delphi-protocol'
 import { nowIso } from '@goatlab/delphi-protocol'
 import { evaluateGoals, seedGoals } from './goals.js'
+import { emitDefectTasks, scanLoopAnomalies } from './introspect.js'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -56,6 +57,28 @@ export async function scanDebt(
   brainId: string,
 ): Promise<DebtItem[]> {
   const items: DebtItem[] = []
+
+  // ── Introspection first: detect anomalies and auto-emit defect tasks ──────────
+  // Must run before other debt checks so freshly-created loop-defect TASK leaves
+  // surface as QUEUED_TASK items in the same scan.
+  // Anti-recursion guard: introspection tasks themselves failing must not spawn
+  // infinite meta-tasks. The cap (5 active auto-detected tasks) in emitDefectTasks
+  // enforces this. We also do not call scanDebt from within introspect.ts.
+  {
+    const anomalies = await scanLoopAnomalies(store, brainId)
+    if (anomalies.length > 0) {
+      const { created, deduped } = await emitDefectTasks(
+        store,
+        brainId,
+        anomalies,
+      )
+      if (created > 0 || deduped > 0) {
+        console.log(
+          `[scanDebt] introspection: ${anomalies.length} anomalies → created=${created} deduped=${deduped}`,
+        )
+      }
+    }
+  }
 
   const [regions, leaves, healthData] = await Promise.all([
     store.listRegions(brainId),

@@ -2,9 +2,11 @@
 //
 // Provides:
 //   makeBrainClientAdapter   — BrainClient over BrainStore
-//   makeConstitutionGuard    — classifies evolution work orders
-//   makePerspectiveReviewer  — 3 rubric-backed heuristic perspectives for RFC review
+//   makeConstitutionGuard    — classifies evolution work orders (The Human Boundary)
+//   makePerspectiveReviewer  — rubric-backed heuristic perspectives for review
+//   perspectivesForWorkClass — selects perspectives by work class (code vs rfc)
 //   makeReviewDecider        — rejects on any single reject, escalates otherwise
+//   runArbiter               — injectable arbiter runner for inside-boundary escalation
 //   persistEvaluation        — creates EVALUATION leaf + EVALUATES edge
 
 import { existsSync, readFileSync } from 'node:fs'
@@ -30,6 +32,7 @@ import {
 } from '@goatlab/delphi-governance'
 import { BrainStore } from '@goatlab/delphi-knowledge'
 import type { Leaf } from '@goatlab/delphi-protocol'
+import { classifyWorkOrder } from './constitution.js'
 import type { RubricContent } from './rubrics.js'
 import { getRubricByTitle } from './rubrics.js'
 
@@ -232,6 +235,13 @@ function leafToDecision(leaf: Leaf): Decision {
 }
 
 // ── ConstitutionGuard ─────────────────────────────────────────────────────────
+//
+// The Human Boundary (CONSTITUTION.md):
+//   requiresHuman=true ONLY when classifyWorkOrder → humanImpact=true,
+//   OR when the work touches a migrated (published) package (those edits
+//   affect published consumers = humans → block outright).
+//   Everything operating inside this repo is autonomous; borderline
+//   review scores route to the ARBITER AGENT, never to a human.
 
 export function makeConstitutionGuard(): DefaultConstitutionGuard {
   const PROTECTED_PACKAGES = [
@@ -259,6 +269,8 @@ export function makeConstitutionGuard(): DefaultConstitutionGuard {
       const trigger = (item as Action).type ?? ''
       const description = item.description ?? ''
 
+      // 1. Protected (migrated/published) packages → BLOCK.
+      //    Reason: editing a published package affects external consumers = humans.
       const touchesProtected = PROTECTED_PACKAGES.some(
         pkg => description.includes(pkg) || tags.includes(pkg),
       )
@@ -266,11 +278,31 @@ export function makeConstitutionGuard(): DefaultConstitutionGuard {
         return {
           allow: false,
           reasons: [
-            `Work order touches a protected (migrated) package: ${PROTECTED_PACKAGES.find(p => description.includes(p) || tags.includes(p))}. Blocked by Constitution.`,
+            `Work order touches a protected (migrated/published) package: ${PROTECTED_PACKAGES.find(p => description.includes(p) || tags.includes(p))}. Blocked — published-consumers = humans (The Human Boundary).`,
           ],
         }
       }
 
+      // 2. Human-boundary classification via constitution.ts policy.
+      //    Any action that would contact, interact with, or affect another human
+      //    requires human approval.
+      const classification = classifyWorkOrder(
+        { description },
+        `${trigger} ${description} ${tags.join(' ')}`,
+      )
+      if (classification.humanImpact) {
+        return {
+          allow: false,
+          requiresHuman: true,
+          reasons: [
+            'Human Boundary: this work order crosses the human boundary.',
+            ...classification.reasons,
+          ],
+        }
+      }
+
+      // 3. Spec / RFC work → allow, requiresReview (agent perspectives), NOT human.
+      //    Inside-boundary escalation routes to arbiter agent.
       const isSpecWork =
         trigger === 'SPEC_GAP' ||
         description.includes('rfcs/') ||
@@ -278,25 +310,27 @@ export function makeConstitutionGuard(): DefaultConstitutionGuard {
         tags.includes('rfc')
       if (isSpecWork) {
         return {
-          requiresHuman: true,
+          allow: true,
+          requiresHuman: false,
           reasons: [
-            'Work touches rfcs/ or is SPEC_GAP — perspective review required before execution.',
+            'Spec/RFC work inside this repo — Constitution allows; perspective review + arbiter escalation applies.',
           ],
         }
       }
 
+      // 4. Code work (QUEUED_TASK) → allow, requiresReview (agent perspectives, NOT human).
       const isCodeWork = trigger === 'QUEUED_TASK'
-
       if (isCodeWork) {
         return {
           allow: true,
-          requiresHuman: true,
+          requiresHuman: false,
           reasons: [
-            'QUEUED_TASK is a code-touching engineering work order — Constitution allows but requires perspective review (change-scope + spec-coherence).',
+            'QUEUED_TASK is a code-touching engineering work order inside this repo — Constitution allows; change-scope + spec-coherence perspective review applies; arbiter handles borderline cases.',
           ],
         }
       }
 
+      // 5. Docs/research/maintenance → allow, no review required.
       const isDocsWork =
         description.includes('docs/') ||
         description.includes('research/') ||
@@ -306,18 +340,136 @@ export function makeConstitutionGuard(): DefaultConstitutionGuard {
         trigger === 'STALE_INDEXES' ||
         trigger === 'FLAGGED_LEAVES' ||
         trigger === 'GOAL_GAP'
-
       if (isDocsWork) {
         return {
           allow: true,
           requiresHuman: false,
-          reasons: ['Docs/research/maintenance work — Constitution allows.'],
+          reasons: [
+            'Docs/research/maintenance work — Constitution allows; no review required.',
+          ],
         }
       }
 
       return undefined
     },
   })
+}
+
+// ── perspectivesForWorkClass ──────────────────────────────────────────────────
+//
+// Selects the appropriate perspectives based on work class.
+//
+//   code work (QUEUED_TASK non-rfc diffs) → change-scope + spec-coherence
+//   rfc-touching work (SPEC_GAP / rfcs/ diffs) → all three incl. redundancy
+//
+// The redundancy perspective scans rfcs/ heading overlaps — it is only
+// meaningful for RFC/spec drafts and must NOT score code diffs.
+
+export type WorkClass = 'code' | 'rfc' | 'docs'
+
+export function perspectivesForWorkClass(
+  workClass: WorkClass,
+): import('@goatlab/delphi-governance').Perspective[] {
+  if (workClass === 'rfc') {
+    return [
+      { name: 'redundancy', weight: 2 },
+      { name: 'spec-coherence', weight: 1 },
+      { name: 'scope', weight: 2 },
+    ]
+  }
+  // code and docs: scope (change-scope) + spec-coherence; no redundancy
+  return [
+    { name: 'spec-coherence', weight: 1 },
+    { name: 'scope', weight: 2 },
+  ]
+}
+
+// ── Arbiter runner ────────────────────────────────────────────────────────────
+//
+// Injectable runner for inside-boundary escalation.
+// Production implementation spawns `claude -p` with model ARBITER_MODEL.
+// Tests inject a stub via `runArbiterFn`.
+
+export interface ArbiterInput {
+  workOrder: string
+  rubricScoresSummary: string
+  diffSummary: string
+}
+
+export interface ArbiterVerdict {
+  outcome: 'APPROVE' | 'REJECT'
+  rationale: string
+}
+
+export type ArbiterRunner = (input: ArbiterInput) => Promise<ArbiterVerdict>
+
+/** Default production arbiter: spawns claude -p with a stronger model. */
+export async function runArbiter(input: ArbiterInput): Promise<ArbiterVerdict> {
+  const { spawnSync } = await import('node:child_process')
+  const model = process.env.ARBITER_MODEL ?? 'claude-opus-4-8'
+  const prompt = [
+    'You are an ARBITER agent for the Delphi autonomous evolution loop.',
+    'The Human Boundary constitution is in effect:',
+    '  - Human approval is required ONLY for actions that contact/interact with/affect another human.',
+    '  - All work inside this repository is fully autonomous.',
+    '  - Your ruling is binding. Issue APPROVE or REJECT with a 2-sentence rationale.',
+    '',
+    '## Work Order',
+    input.workOrder,
+    '',
+    '## Perspective Rubric Scores',
+    input.rubricScoresSummary,
+    '',
+    '## Diff Summary',
+    input.diffSummary,
+    '',
+    'Respond with exactly one line: APPROVE: <rationale>  OR  REJECT: <rationale>',
+  ].join('\n')
+
+  const result = spawnSync('claude', ['-p', '--model', model, prompt], {
+    encoding: 'utf8',
+    timeout: 5 * 60 * 1000,
+  })
+
+  const stdout = (result.stdout ?? '').trim()
+  if (result.status !== 0 || !stdout) {
+    // Arbiter failure → conservative REJECT
+    return {
+      outcome: 'REJECT',
+      rationale: `Arbiter failed or timed out (exit ${result.status ?? 'timeout'}). Conservative REJECT applied.`,
+    }
+  }
+
+  const approveMatch = /^APPROVE\s*:\s*(.+)$/i.exec(stdout)
+  if (approveMatch) {
+    return { outcome: 'APPROVE', rationale: approveMatch[1]!.trim() }
+  }
+  const rejectMatch = /^REJECT\s*:\s*(.+)$/i.exec(stdout)
+  if (rejectMatch) {
+    return { outcome: 'REJECT', rationale: rejectMatch[1]!.trim() }
+  }
+  // Unrecognized response → conservative REJECT
+  return {
+    outcome: 'REJECT',
+    rationale: `Arbiter response not parseable ("${stdout.slice(0, 80)}"). Conservative REJECT applied.`,
+  }
+}
+
+/** Parse an arbiter verdict from a raw string (for unit testing). */
+export function parseArbiterVerdict(raw: string): ArbiterVerdict {
+  const trimmed = raw.trim()
+  const approveMatch = /^APPROVE\s*:\s*(.+)$/i.exec(trimmed)
+  if (approveMatch) {
+    return { outcome: 'APPROVE', rationale: approveMatch[1]!.trim() }
+  }
+  const rejectMatch = /^REJECT\s*:\s*(.+)$/i.exec(trimmed)
+  if (rejectMatch) {
+    return { outcome: 'REJECT', rationale: rejectMatch[1]!.trim() }
+  }
+  return {
+    outcome: 'REJECT',
+    rationale: `Unparseable arbiter response: "${trimmed.slice(0, 80)}". Conservative REJECT applied.`,
+  }
 }
 
 // ── PerspectiveReviewer ───────────────────────────────────────────────────────
@@ -830,5 +982,6 @@ export function makeReviewDecider(): DefaultReviewDecider {
   })
 }
 
+export { classifyWorkOrder, HUMAN_BOUNDARY_ACTIONS } from './constitution.js'
 export type { BrainClient, Decision, Perspective }
 export { InMemoryBrainClient }

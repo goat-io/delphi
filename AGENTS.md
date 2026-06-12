@@ -6,6 +6,21 @@ Version: 0.1
 
 ---
 
+# Constitution: The Human Boundary
+
+See [CONSTITUTION.md](./CONSTITUTION.md) for the full autonomy policy.
+
+**One-line rule:** Human approval is required ONLY when you intend to contact,
+interact with, or affect another human in any way. Everything else — all code,
+tests, docs, brain writes, commits, task management, spec/RFC changes inside
+this repo — is fully autonomous.
+
+Escalation inside the boundary (borderline review scores, inconclusive
+perspectives) routes to an ARBITER AGENT (stronger model re-review), never
+to a human.
+
+---
+
 # What Is Delphi?
 
 Delphi is a Knowledge Operating System.
