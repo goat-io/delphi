@@ -231,7 +231,7 @@ describe('evolve harness', () => {
     expect(titles).not.toContain('- What supports it?')
   })
 
-  it('6. SPEC_GAP: BELIEF with "future work" statement surfaces as SPEC_GAP item (priority 30)', async () => {
+  it('6. SPEC_GAP: BELIEF with "Candidate for a future RFC" statement surfaces as SPEC_GAP item (priority 30)', async () => {
     const specRegion = await store.getRegionByTitle(brainId, 'Spec')
     const specRegionId = specRegion?.id
 
@@ -240,8 +240,7 @@ describe('evolve harness', () => {
       kind: 'BELIEF',
       status: 'ACTIVE',
       title: 'Markdown import/export bridge',
-      statement:
-        'A markdown import/export bridge is future work, recorded here.',
+      statement: 'A markdown import/export bridge. Candidate for a future RFC.',
       aliases: [],
       tags: [],
       regionId: specRegionId,
@@ -253,6 +252,42 @@ describe('evolve harness', () => {
     expect(specGapItem).toBeDefined()
     expect(specGapItem?.priority).toBe(30)
     expect(specGapItem?.target).toBeTruthy()
+  })
+
+  it('6b. SPEC_GAP precision: "future work" phrase does NOT trigger SPEC_GAP; "--- something" title is skipped', async () => {
+    const specRegion = await store.getRegionByTitle(brainId, 'Spec')
+    const specRegionId = specRegion?.id
+
+    // Leaf that would previously be a false positive (generic "future work" phrase)
+    await store.createLeaf({
+      brainId,
+      kind: 'BELIEF',
+      status: 'ACTIVE',
+      title: 'A Task is a unit of future work',
+      statement: 'A Task is a unit of future work — core domain concept.',
+      aliases: [],
+      tags: [],
+      regionId: specRegionId,
+    })
+
+    // Leaf with frontmatter-noise title ("--- something") and the exact phrase
+    await store.createLeaf({
+      brainId,
+      kind: 'BELIEF',
+      status: 'ACTIVE',
+      title: '--- frontmatter noise leaf',
+      statement: 'Candidate for a future RFC but title is noisy frontmatter.',
+      aliases: [],
+      tags: [],
+      regionId: specRegionId,
+    })
+
+    const debt = await scanDebt(store, brainId)
+
+    // The "--- something" titled leaf must NOT appear in SPEC_GAP items
+    const specGapItems = debt.filter(d => d.trigger === 'SPEC_GAP')
+    const noisyItem = specGapItems.find(d => d.targetTitle.startsWith('---'))
+    expect(noisyItem).toBeUndefined()
   })
 
   it('7. buildWorkPrompt: EMPTY_REGION contains closure criteria and WORK COMPLETE rule; SPEC_GAP contains RFC-9999', async () => {
@@ -320,5 +355,8 @@ describe('evolve harness', () => {
       specGapTask as Parameters<typeof buildWorkPrompt>[1],
     )
     expect(promptSpecGap).toContain('RFC-9999')
+    // False-positive escape hatch must be present
+    expect(promptSpecGap).toContain('FIRST check whether rfcs/')
+    expect(promptSpecGap).toContain('coverage.md')
   })
 })

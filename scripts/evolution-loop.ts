@@ -1,9 +1,17 @@
-// pnpm evolve:loop [--cycles N] [--dry-run]
+// pnpm evolve:loop [--cycles N] [--dry-run] [--executor pty|headless]
 
 import { type SpawnSyncReturns, spawn, spawnSync } from 'node:child_process'
-import { appendFileSync, existsSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { rm } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { homedir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { BrainStore, createDb, migrate } from '@goatlab/delphi-knowledge'
 import {
   buildWorkPrompt,
@@ -17,11 +25,17 @@ import {
 export interface LoopArgs {
   cycles: number
   dryRun: boolean
+  executor: 'pty' | 'headless'
 }
 
 export function parseArgs(argv: string[]): LoopArgs {
   let cycles = 3
   let dryRun = false
+  let executor: 'pty' | 'headless' =
+    (process.env.AGENT_EXECUTOR as 'pty' | 'headless' | undefined) ===
+    'headless'
+      ? 'headless'
+      : 'pty'
 
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--cycles' && argv[i + 1]) {
@@ -30,10 +44,16 @@ export function parseArgs(argv: string[]): LoopArgs {
       i++
     } else if (argv[i] === '--dry-run') {
       dryRun = true
+    } else if (argv[i] === '--executor' && argv[i + 1]) {
+      const val = argv[i + 1]
+      if (val === 'headless' || val === 'pty') {
+        executor = val
+      }
+      i++
     }
   }
 
-  return { cycles, dryRun }
+  return { cycles, dryRun, executor }
 }
 
 // ── Git helpers ───────────────────────────────────────────────────────────────
@@ -54,7 +74,265 @@ function gitShortHash(cwd: string): string {
   return (r.stdout ?? '').trim()
 }
 
-// ── Spawn agent ───────────────────────────────────────────────────────────────
+/** Return names of files added between two commits (uses --diff-filter=A). */
+function gitAddedFiles(cwd: string, before: string, after: string): string[] {
+  const r = spawnSync(
+    'git',
+    ['diff', '--name-only', '--diff-filter=A', `${before}..${after}`],
+    { cwd, encoding: 'utf8' },
+  )
+  return (r.stdout ?? '').split('\n').filter(Boolean)
+}
+
+// ── Agent executor abstraction ────────────────────────────────────────────────
+
+export interface AgentResult {
+  output: string
+  ok: boolean
+}
+
+/**
+ * Headless executor: uses `claude -p` (the existing path).
+ * No TTY allocated; usage goes to API quota.
+ */
+async function runAgentHeadless(
+  prompt: string,
+  cwd: string,
+  hasPermissionMode: boolean,
+  timeoutMs: number,
+): Promise<AgentResult> {
+  const agentSpawnArgs = hasPermissionMode
+    ? ['-p', prompt, '--permission-mode', 'acceptEdits', '--model', 'sonnet']
+    : ['-p', prompt, '--model', 'sonnet']
+
+  const result = await spawnAgent(
+    ['claude', ...agentSpawnArgs],
+    '',
+    cwd,
+    timeoutMs,
+  )
+
+  return { output: result.stdout, ok: result.code === 0 }
+}
+
+/**
+ * PTY executor fallback: uses macOS `script -q /dev/null` to allocate a real
+ * TTY, then watches the newest session JSONL under
+ * ~/.claude/projects/<encoded-cwd>/ for the final assistant message + idle.
+ *
+ * This is the path taken when claude-pty-wrapper's dist is unavailable.
+ * Keeps usage on the Claude subscription (interactive session).
+ */
+async function runAgentPtyFallback(
+  prompt: string,
+  cwd: string,
+  hasPermissionMode: boolean,
+  timeoutMs: number,
+): Promise<AgentResult> {
+  // Encode cwd the same way Claude does for session directories
+  const encodedCwd = cwd.replace(/\//g, '-').replace(/^-/, '')
+  const sessionDir = join(homedir(), '.claude', 'projects', encodedCwd)
+
+  // Take a snapshot of existing JSONL files before we start
+  let preFiles: string[] = []
+  try {
+    preFiles = existsSync(sessionDir)
+      ? readdirSync(sessionDir)
+          .filter(f => f.endsWith('.jsonl'))
+          .map(f => join(sessionDir, f))
+      : []
+  } catch {
+    preFiles = []
+  }
+
+  const claudeArgs = hasPermissionMode
+    ? ['claude', '--permission-mode', 'acceptEdits', '--model', 'sonnet']
+    : ['claude', '--model', 'sonnet']
+
+  // script -q /dev/null <claude-bin> [flags] allocates a PTY
+  const scriptArgs = ['-q', '/dev/null', ...claudeArgs]
+
+  return new Promise(resolve_ => {
+    const chunks: string[] = []
+    let timedOut = false
+
+    const proc = spawn('script', scriptArgs, {
+      cwd,
+      stdio: ['pipe', 'pipe', 'inherit'],
+      env: { ...process.env },
+    })
+
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      const text = chunk.toString()
+      process.stdout.write(text)
+      chunks.push(text)
+    })
+
+    const globalTimer = setTimeout(() => {
+      timedOut = true
+      proc.kill('SIGTERM')
+    }, timeoutMs)
+
+    // Wait a moment for Claude to start and create a session file
+    const startupDelay = setTimeout(() => {
+      // Send prompt via stdin then wait for /exit
+      try {
+        proc.stdin?.write(`${prompt}\n`)
+      } catch {
+        // stdin may already be closed
+      }
+    }, 2000)
+
+    // Poll for completion: watch for assistant message + idle in JSONL
+    let pollInterval: ReturnType<typeof setInterval> | null = null
+    let lastAssistantContent = ''
+    let idleCount = 0
+    const IDLE_POLLS_REQUIRED = 3 // ~9 seconds of no new content
+
+    const checkCompletion = () => {
+      // Find the newest JSONL that appeared after our snapshot
+      let candidateFiles: string[] = []
+      try {
+        candidateFiles = existsSync(sessionDir)
+          ? readdirSync(sessionDir)
+              .filter(f => f.endsWith('.jsonl'))
+              .map(f => join(sessionDir, f))
+              .filter(f => !preFiles.includes(f))
+          : []
+      } catch {
+        return
+      }
+
+      if (candidateFiles.length === 0) {
+        return
+      }
+
+      // Read the most recently modified one
+      const newest = candidateFiles.sort((a, b) => {
+        try {
+          return statSync(b).mtimeMs - statSync(a).mtimeMs
+        } catch {
+          return 0
+        }
+      })[0]
+
+      if (!newest) {
+        return
+      }
+
+      let jsonlContent = ''
+      try {
+        jsonlContent = readFileSync(newest, 'utf8')
+      } catch {
+        return
+      }
+
+      // Extract last assistant text block
+      const lines = jsonlContent.split('\n').filter(Boolean)
+      let lastContent = ''
+      for (const line of lines) {
+        try {
+          const rec = JSON.parse(line)
+          if (
+            rec?.type === 'assistant' &&
+            Array.isArray(rec?.message?.content)
+          ) {
+            for (const block of rec.message.content) {
+              if (block?.type === 'text') {
+                lastContent = block.text as string
+              }
+            }
+          }
+        } catch {
+          // not valid JSON
+        }
+      }
+
+      if (lastContent && lastContent === lastAssistantContent) {
+        idleCount++
+        if (idleCount >= IDLE_POLLS_REQUIRED) {
+          // Looks done — send /exit
+          if (pollInterval) {
+            clearInterval(pollInterval)
+            pollInterval = null
+          }
+          try {
+            proc.stdin?.write('/exit\n')
+            proc.stdin?.end()
+          } catch {
+            // stdin already closed
+          }
+        }
+      } else if (lastContent) {
+        lastAssistantContent = lastContent
+        idleCount = 0
+      }
+    }
+
+    pollInterval = setInterval(checkCompletion, 3000)
+
+    proc.on('close', code => {
+      clearTimeout(globalTimer)
+      clearTimeout(startupDelay)
+      if (pollInterval) {
+        clearInterval(pollInterval)
+      }
+
+      if (timedOut) {
+        console.warn('[PTY] Agent timed out')
+      }
+
+      const output = chunks.join('')
+      resolve_({ output, ok: !timedOut && code === 0 })
+    })
+  })
+}
+
+/**
+ * Top-level agent runner — selects executor based on args.
+ * Falls back to headless on PTY runtime error.
+ */
+export async function runAgent(
+  prompt: string,
+  opts: {
+    executor: 'pty' | 'headless'
+    cwd: string
+    hasPermissionMode: boolean
+    timeoutMs: number
+  },
+): Promise<AgentResult> {
+  if (opts.executor === 'headless') {
+    return runAgentHeadless(
+      prompt,
+      opts.cwd,
+      opts.hasPermissionMode,
+      opts.timeoutMs,
+    )
+  }
+
+  // PTY path
+  try {
+    const result = await runAgentPtyFallback(
+      prompt,
+      opts.cwd,
+      opts.hasPermissionMode,
+      opts.timeoutMs,
+    )
+    return result
+  } catch (err) {
+    console.warn(
+      `[PTY] PTY executor failed (${(err as Error).message}) — falling back to headless for this cycle`,
+    )
+    return runAgentHeadless(
+      prompt,
+      opts.cwd,
+      opts.hasPermissionMode,
+      opts.timeoutMs,
+    )
+  }
+}
+
+// ── Spawn agent (used by headless path) ──────────────────────────────────────
 
 async function spawnAgent(
   cliArgs: string[],
@@ -224,7 +502,7 @@ async function main(): Promise<void> {
     `\n╔══ Delphi Evolution Loop ═══════════════════════════════════════╗`,
   )
   console.log(
-    `║  cycles=${args.cycles}  dry-run=${args.dryRun}  data=${dataDir}`,
+    `║  cycles=${args.cycles}  dry-run=${args.dryRun}  executor=${args.executor}  data=${dataDir}`,
   )
   console.log(
     `╚════════════════════════════════════════════════════════════════╝\n`,
@@ -240,20 +518,20 @@ async function main(): Promise<void> {
   }
   console.log(`claude CLI: ${(versionCheck.stdout ?? '').trim()}`)
 
-  // Detect --permission-mode flag by probing a small invocation (--help output
-  // is truncated at ~8192 bytes in non-TTY mode so we can't rely on it for
-  // flags that appear late in the help text; test with acceptEdits instead).
+  // Detect --permission-mode flag
   const permProbe = spawnSync(
     'claude',
     ['--permission-mode', 'acceptEdits', '--version'],
     { encoding: 'utf8' },
   )
   const hasPermissionMode = permProbe.status === 0
-  const agentBaseArgs = hasPermissionMode
-    ? ['claude', '-p', '--permission-mode', 'acceptEdits', '--model', 'sonnet']
-    : ['claude', '-p', '--model', 'sonnet']
 
-  console.log(`Detected flags: ${agentBaseArgs.slice(2).join(' ')}\n`)
+  console.log(
+    `Executor: ${args.executor}  permission-mode: ${hasPermissionMode}\n`,
+  )
+
+  // Anti-livelock: track task ids dispatched this run
+  const dispatchedTaskIds = new Set<string>()
 
   const summary: Array<{
     cycle: number
@@ -288,7 +566,40 @@ async function main(): Promise<void> {
       break
     }
 
-    const top = actionable[0] as DebtItem
+    // Anti-livelock: find the first debt item that is not already dispatched /
+    // not stuck as unverified
+    let chosenDebt: DebtItem | undefined
+    let chosenTask: Awaited<ReturnType<typeof createTaskFromDebt>> | undefined
+
+    for (const candidate of actionable) {
+      const t = await createTaskFromDebt(store, brainId, candidate)
+      const isAlreadyDispatched = dispatchedTaskIds.has(t.id)
+      const isUnverified =
+        (t.content as Record<string, unknown> | undefined)?.unverified === true
+
+      if (isAlreadyDispatched || isUnverified) {
+        console.log(
+          `Skipping [${candidate.trigger}] "${candidate.targetTitle}" — already dispatched or unverified (anti-livelock)`,
+        )
+        continue
+      }
+
+      chosenDebt = candidate
+      chosenTask = t
+      break
+    }
+
+    if (!chosenDebt || !chosenTask) {
+      console.log(
+        'No actionable debt remains after livelock check — ending loop.',
+      )
+      await (db as { close(): Promise<void> }).close()
+      break
+    }
+
+    const top = chosenDebt
+    const task = chosenTask
+
     console.log(
       `Top debt: [${top.trigger}] pri=${top.priority} — ${top.targetTitle}`,
     )
@@ -296,12 +607,12 @@ async function main(): Promise<void> {
     const healthBefore = await store.health(brainId)
     const healthBeforeStr = healthStr(healthBefore)
 
-    // 2. Create task, build prompt
-    const task = await createTaskFromDebt(store, brainId, top)
+    // 2. Build prompt
     const prompt = buildWorkPrompt(top, task)
 
     // 3. Snapshot git state, close db
     const snapshotLines = gitPorcelain(cwd)
+    const preCommitHash = gitShortHash(cwd)
     await (db as { close(): Promise<void> }).close()
 
     // Dry-run: print prompt and stop
@@ -312,25 +623,23 @@ async function main(): Promise<void> {
       console.log(prompt)
       console.log(`\n${'─'.repeat(70)}`)
       console.log('(no agent executed, no commit made)')
+      console.log(`Executor that would be used: ${args.executor}`)
       break
     }
 
     // 4. Execute agent
-    // Build: claude -p "<prompt>" --permission-mode acceptEdits --model sonnet
-    const agentSpawnArgs = hasPermissionMode
-      ? ['-p', prompt, '--permission-mode', 'acceptEdits', '--model', 'sonnet']
-      : ['-p', prompt, '--model', 'sonnet']
+    console.log(`\nRunning agent (executor=${args.executor})...`)
+    dispatchedTaskIds.add(task.id)
 
-    console.log('\nRunning agent...')
-    const agentResult = await spawnAgent(
-      ['claude', ...agentSpawnArgs],
-      '',
+    const agentResult = await runAgent(prompt, {
+      executor: args.executor,
       cwd,
-      15 * 60 * 1000,
-    )
+      hasPermissionMode,
+      timeoutMs: 15 * 60 * 1000,
+    })
 
     const agentSummaryLine =
-      agentResult.stdout
+      agentResult.output
         .split('\n')
         .reverse()
         .find(l => l.includes('WORK COMPLETE:')) ?? '(no summary)'
@@ -346,18 +655,13 @@ async function main(): Promise<void> {
         100,
       )
       const fixPrompt = `The verification gate is failing after your changes. Output:\n${gateOutput}\nFix it. Same hard rules apply: never rename/version-bump packages, never touch protected packages, never edit .delphi/, do NOT git commit/push, end with WORK COMPLETE: <summary>.`
-      const fixArgs = hasPermissionMode
-        ? [
-            '-p',
-            fixPrompt,
-            '--permission-mode',
-            'acceptEdits',
-            '--model',
-            'sonnet',
-          ]
-        : ['-p', fixPrompt, '--model', 'sonnet']
 
-      await spawnAgent(['claude', ...fixArgs], '', cwd, 15 * 60 * 1000)
+      await runAgent(fixPrompt, {
+        executor: args.executor,
+        cwd,
+        hasPermissionMode,
+        timeoutMs: 15 * 60 * 1000,
+      })
 
       gateResult = runGate(cwd)
       gateGreenResult = gateGreen(gateResult)
@@ -424,23 +728,25 @@ async function main(): Promise<void> {
         d => d.trigger === top.trigger && d.target === top.target,
       )
 
-      // For OPEN_QUESTION also accept: research/ file added in commit
+      // For OPEN_QUESTION: accept if research/ file added in commit
       let researchAdded = false
       if (top.trigger === 'OPEN_QUESTION') {
-        const logResult = spawnSync(
-          'git',
-          ['show', '--name-only', '--format=', 'HEAD'],
-          {
-            cwd,
-            encoding: 'utf8',
-          },
-        )
-        researchAdded = (logResult.stdout ?? '')
-          .split('\n')
-          .some(f => f.startsWith('research/'))
+        const addedFiles = gitAddedFiles(cwd, preCommitHash, commitHash)
+        researchAdded = addedFiles.some(f => f.startsWith('research/'))
       }
 
-      closureMet = !stillPresent || researchAdded
+      // For SPEC_GAP: accept if any rfcs/RFC-*.md was added in commit
+      // (drafting an RFC doesn't remove the triggering leaf, so re-scan
+      // will always show the debt item — mirror the OPEN_QUESTION mechanism)
+      let rfcAdded = false
+      if (top.trigger === 'SPEC_GAP') {
+        const addedFiles = gitAddedFiles(cwd, preCommitHash, commitHash)
+        rfcAdded = addedFiles.some(
+          f => f.startsWith('rfcs/RFC-') && f.endsWith('.md'),
+        )
+      }
+
+      closureMet = !stillPresent || researchAdded || rfcAdded
 
       if (closureMet) {
         await s3.updateLeaf(task.id, {
@@ -515,7 +821,9 @@ async function main(): Promise<void> {
   console.log(`${'═'.repeat(70)}\n`)
 }
 
-main().catch(e => {
-  console.error(e)
-  process.exit(1)
-})
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch(e => {
+    console.error(e)
+    process.exit(1)
+  })
+}

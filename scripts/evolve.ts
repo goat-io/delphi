@@ -110,15 +110,17 @@ export async function scanDebt(
   }
 
   // SPEC_GAP (priority 30): leaves mentioning spec gaps
-  const specGapQueries = [
-    'no RFC yet',
-    'future work',
-    'Candidate for a future RFC',
-  ]
+  // Exact phrases only — broad terms like "future work" cause false positives.
+  const specGapQueries = ['no RFC yet', 'Candidate for a future RFC']
   const specGapLeafMap = new Map<string, Leaf>()
   for (const query of specGapQueries) {
     const hits = await store.searchLeaves(brainId, query, 5)
     for (const leaf of hits) {
+      // Skip frontmatter-extraction noise (titles starting with "---")
+      const title = (leaf.title as string) ?? ''
+      if (title.startsWith('---')) {
+        continue
+      }
       if (!specGapLeafMap.has(leaf.id)) {
         specGapLeafMap.set(leaf.id, leaf)
       }
@@ -336,7 +338,7 @@ ${HARD_RULES}`
     }
 
     case 'SPEC_GAP':
-      body = `The Brain surfaced a spec gap: ${item.detail}. Draft the missing RFC in rfcs/ following the existing house style EXACTLY (read rfcs/RFC-0026 as the style reference: Status: Draft, Depends On, Purpose, Core Principle, sections, Canonical Rules, Success Criteria). Choose the next free RFC number (ls rfcs/). Keep it focused (~150-250 lines). Update rfcs/RFC-9999-Delphi-Specification-Index.md: add it to the reading order phase that fits and the dependency graph, and remove the corresponding entry from 'Known open areas' if present.`
+      body = `The Brain surfaced a spec gap: ${item.detail}. FIRST check whether rfcs/ already covers this topic (grep the rfcs directory). If covered, do NOT draft a duplicate RFC — instead write research/<kebab>-coverage.md (frontmatter + 3-5 declarative sentences stating where it is covered) and finish. If not covered: draft the missing RFC in rfcs/ following the existing house style EXACTLY (read rfcs/RFC-0026 as the style reference: Status: Draft, Depends On, Purpose, Core Principle, sections, Canonical Rules, Success Criteria). Choose the next free RFC number (ls rfcs/). Keep it focused (~150-250 lines). Update rfcs/RFC-9999-Delphi-Specification-Index.md: add it to the reading order phase that fits and the dependency graph, and remove the corresponding entry from 'Known open areas' if present.`
       break
 
     case 'ORPHAN_BELIEFS':

@@ -194,7 +194,7 @@ guards intact regardless of who or what did the research.
 |---|---|---|
 | pilot | BUSL-1.1 (internal use OK) | Ticket → plan → code → PR autonomy on Claude Code; candidate harness for Delphi's own 100% AI-authored development. Its dev/stage/prod autonomy levels are the pattern for supervising research agents |
 | attn | GPL-3.0 | Human cockpit for parallel agent sessions; personal tooling |
-| claude-pty-wrapper | MIT | Skip — Claude Code headless mode and the Agent SDK cover this officially |
+| claude-pty-wrapper | MIT | ADOPTED: PTY executor for the evolution loop — interactive Claude session keeps usage on the subscription (user requirement, June 2026); headless claude -p remains the fallback executor |
 
 ## Watch, don't adopt
 
