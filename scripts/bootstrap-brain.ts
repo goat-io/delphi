@@ -119,6 +119,35 @@ export async function bootstrapBrain(opts: {
     }
   }
 
+  // 4a2. research/*.md → "Spec"
+  const researchDir = resolve(repoRoot, 'research')
+  if (existsSync(researchDir)) {
+    const researchFiles = (await readdir(researchDir))
+      .filter(f => f.endsWith('.md'))
+      .map(f => resolve(researchDir, f))
+
+    log(`[bootstrap] Ingesting ${researchFiles.length} research files → "Spec"`)
+    for (const filePath of researchFiles) {
+      const result = await ingestFile(store, brainId, filePath)
+      if (result.skipped) {
+        skippedAssets++
+        continue
+      }
+      if (result.asset && result.chunks.length > 0) {
+        const r = await extractAsset(
+          store,
+          brainId,
+          extractor,
+          result.asset,
+          result.chunks,
+          { defaultRegionId: specRegionId },
+        )
+        totalCreated += r.created
+        totalMerged += r.merged
+      }
+    }
+  }
+
   // 4b. AGENTS.md + README.md → "Operations"
   const opsRegionId = regionMap.get('Operations')!
   const opsFiles = ['AGENTS.md', 'README.md']
