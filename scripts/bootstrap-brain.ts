@@ -13,6 +13,7 @@ import {
 } from '@goatlab/delphi-indexer'
 import { ingestFile } from '@goatlab/delphi-ingestion'
 import { BrainStore, createDb, migrate } from '@goatlab/delphi-knowledge'
+import { seedGoals } from './goals.js'
 
 const SEEDED_REGIONS = [
   'Spec',
@@ -238,6 +239,29 @@ export async function bootstrapBrain(opts: {
         totalMerged += r.merged
       }
     }
+  }
+
+  // 4e. Seed standing goals (idempotent) into "Objectives" region
+  const goalLeaves = await seedGoals(store, brainId)
+  log(
+    `[bootstrap] Goals seeded: ${goalLeaves.length} goal leaves in "Objectives"`,
+  )
+
+  // 4f. Archive RFC-template boilerplate questions (title < 30 chars) — not real open questions.
+  const allLeaves = await store.listLeaves(brainId)
+  const noiseQuestions = allLeaves.filter(
+    l =>
+      l.kind === 'QUESTION' && l.status !== 'ARCHIVED' && l.title.length < 30,
+  )
+  let archivedNoise = 0
+  for (const q of noiseQuestions) {
+    await store.updateLeaf(q.id, { status: 'ARCHIVED' })
+    archivedNoise++
+  }
+  if (archivedNoise > 0) {
+    log(
+      `[bootstrap] Archived ${archivedNoise} noise question(s) (boilerplate, title < 30 chars)`,
+    )
   }
 
   // 5. Hub detection, index generation, map generation

@@ -4,6 +4,7 @@ import { ensureSeededRegions } from '@goatlab/delphi-indexer'
 import { BrainStore, createDb, migrate } from '@goatlab/delphi-knowledge'
 import type { Leaf } from '@goatlab/delphi-protocol'
 import { nowIso } from '@goatlab/delphi-protocol'
+import { evaluateGoals, seedGoals } from './goals.js'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -14,6 +15,7 @@ export type DebtTrigger =
   | 'STALE_INDEXES'
   | 'SPEC_GAP'
   | 'OPEN_QUESTION'
+  | 'GOAL_GAP'
 
 export interface DebtItem {
   trigger: DebtTrigger
@@ -39,6 +41,8 @@ function closureFor(trigger: DebtTrigger): string {
       return 'a new RFC draft exists in rfcs/ addressing the gap and RFC-9999 references it'
     case 'OPEN_QUESTION':
       return 'question answered with ≥1 evidence-backed belief'
+    case 'GOAL_GAP':
+      return 'goal metric meets target on re-evaluation'
   }
 }
 
@@ -173,6 +177,36 @@ export async function scanDebt(
       targetTitle: q.title,
       detail: `open question: "${q.title}"`,
       priority: 20,
+    })
+  }
+
+  // GOAL_GAP (priority 90): unmet goals — but suppress "All seeded regions populated"
+  // when EMPTY_REGION items already exist (they already represent that work).
+  const hasEmptyRegionItems = items.some(d => d.trigger === 'EMPTY_REGION')
+
+  // Seed goals idempotently so they exist even on first run
+  await seedGoals(store, brainId)
+  const goalResults = await evaluateGoals(store, brainId)
+
+  for (const gr of goalResults) {
+    if (gr.met) {
+      continue
+    }
+    const content = gr.goal.content as {
+      metric: string
+      target: number
+      comparator: string
+    }
+    // Suppress "All seeded regions populated" GOAL_GAP when EMPTY_REGION items exist
+    if (content.metric === 'emptySeededRegions' && hasEmptyRegionItems) {
+      continue
+    }
+    items.push({
+      trigger: 'GOAL_GAP',
+      target: gr.goal.id,
+      targetTitle: gr.goal.title,
+      detail: `goal unmet: ${gr.goal.title} (current ${gr.current}, target ${content.comparator} ${gr.target})`,
+      priority: 90,
     })
   }
 
@@ -346,6 +380,34 @@ ${HARD_RULES}`
     case 'STALE_INDEXES':
       body = `Maintenance: run \`pnpm brain:bootstrap\` and report; if the issue persists, write a research/ note describing root cause.`
       break
+
+    case 'GOAL_GAP': {
+      // Extract metric / target / comparator from the detail string
+      const detailMatch = item.detail.match(
+        /current ([\d.]+), target ([<>=]+) ([\d.]+)/,
+      )
+      const metricStr = detailMatch
+        ? `current=${detailMatch[1]}, target ${detailMatch[2]} ${detailMatch[3]}`
+        : item.detail
+      body = `A Brain health goal is unmet: '${item.targetTitle}'.
+
+Metric: ${metricStr}
+
+Metrics guide:
+- emptySeededRegions: count of SEEDED regions with zero leaves → fix via \`pnpm brain:bootstrap\` or by adding docs to the appropriate source directory.
+- orphanBeliefs: belief leaves with no evidence → fix by curating beliefs (link evidence) or running \`pnpm brain:bootstrap\`.
+- staleIndexes: indexes not regenerated after leaf changes → fix via \`pnpm brain:bootstrap\`.
+- openQuestions: ACTIVE QUESTION leaves → reduce by writing research/*.md answers for open questions.
+- avgConfidence: mean confidence across beliefs → improve by adding evidence to low-confidence beliefs.
+
+Decide the most impactful concrete action you can take now to move this metric toward its target. Prefer:
+1. Running \`pnpm brain:bootstrap\` if the metric is likely stale (staleIndexes, emptySeededRegions).
+2. Writing a research/<slug>.md answer note for an open question (openQuestions).
+3. Adding or curating docs if regions are empty.
+Do NOT write empty files or placeholder content. Every file must contain real knowledge.
+After acting, re-run \`pnpm brain:bootstrap\` to update indexes.`
+      break
+    }
   }
 
   return `${header}

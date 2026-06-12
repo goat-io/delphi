@@ -235,6 +235,7 @@ RFC-0000
 │   │   ├── RFC-0004
 │   │   │   ├── RFC-0020
 │   │   │   │   └── RFC-0027
+│   │   │   │       └── RFC-0031
 │   │   │   └── RFC-0021
 │   │   ├── RFC-0005
 │   │   ├── RFC-0012
@@ -377,7 +378,7 @@ RFC-0000
 
 # Specification Status
 
-All RFCs through RFC-0030 are written (Status: Draft).
+All RFCs through RFC-0031 are written (Status: Draft).
 
 Implementation documents:
 
@@ -388,8 +389,8 @@ Known open areas (no RFC yet):
 - Security & Access Control
   (visibility enforcement, PII, federation trust details)
 
-- Human Review Interface
-  (review queues, approval surfaces)
+- Human Review Interface — UI Surface
+  (approval UI; review queue protocol now covered by RFC-0031)
 
 - Temporal Queries
   (as-of-time traversal; listed as DQL future extension)

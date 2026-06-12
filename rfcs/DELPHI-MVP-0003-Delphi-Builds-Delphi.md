@@ -147,6 +147,34 @@ create-task claimed and executed by the worker, run-agent in progress.
 - Brain health (debt, coverage, confidence) is tracked over
   time; the loop's job is to make those numbers improve.
 
+## Governed evolution (implemented)
+
+Standing **goals** are seeded as OBJECT leaves (tag: `goal`) in
+the "Objectives" region by `scripts/goals.ts::seedGoals`. Each
+goal carries `{metric, target, comparator}`. `evaluateGoals`
+computes each metric from `store.health()` and returns a
+`{goal, current, target, met}` table.
+
+`scanDebt` in `scripts/evolve.ts` emits a **GOAL_GAP** debt item
+(priority 90) for every unmet goal. The emptySeededRegions goal
+is suppressed when EMPTY_REGION items already exist (deduplication
+prevents double work orders).
+
+Every cycle passes through a **ConstitutionGuard** step (`guard`,
+after create-task) built in `scripts/governance-bridge.ts`:
+docs/research/maintenance work → **allow**; rfcs/-touching or
+SPEC_GAP work → **require perspective review**; any work touching
+a migrated package → **block**. A blocked work order marks the
+task DISPUTED and ends the cycle.
+
+For review-required work, a **PerspectiveReviewer** step (`review`,
+after gate) runs three perspectives: `redundancy` (greps rfcs/
+headings for topic overlap), `spec-coherence`, and `scope`. A
+REJECT verdict rolls back cycle changes, marks the task DISPUTED,
+and records the full tradeoff matrix in the task content. The
+verdict (outcome, score, reasons) is appended to every
+`evolution.log.md` cycle entry.
+
 ---
 
 # What "done" looks like

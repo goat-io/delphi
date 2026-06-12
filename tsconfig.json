@@ -22,7 +22,10 @@
     "noFallthroughCasesInSwitch": true,
     "noEmit": true,
     "incremental": false,
-    "importHelpers": false
+    "importHelpers": false,
+    "paths": {
+      "@goatlab/delphi-governance": ["./packages/delphi-governance/dist/index.d.ts"]
+    }
   },
   "include": [
     "packages/delphi-protocol/src/**/*.ts",

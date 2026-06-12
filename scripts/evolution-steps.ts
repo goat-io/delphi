@@ -10,6 +10,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { StepExecutionContext } from '@goatlab/delphi-core'
 import { FunctionStep, step, Workflow } from '@goatlab/delphi-core'
+import type { Decision, Perspective } from '@goatlab/delphi-governance'
 import { BrainStore, createDb, migrate } from '@goatlab/delphi-knowledge'
 import {
   appendCycleLog,
@@ -24,6 +25,11 @@ import {
   runGate,
 } from './evolution-loop.js'
 import { buildWorkPrompt, createTaskFromDebt, scanDebt } from './evolve.js'
+import {
+  makeConstitutionGuard,
+  makePerspectiveReviewer,
+  makeReviewDecider,
+} from './governance-bridge.js'
 
 // ── Trigger input (what we pass to engine.start()) ────────────────────────────
 
@@ -54,6 +60,14 @@ export interface CycleState {
   agentSummaryLine?: string
   changedFiles?: string[]
   hasWorkComplete?: boolean
+  // Written by guard (after create-task, before run-agent)
+  guardAllow?: boolean
+  guardRequiresReview?: boolean
+  guardReasons?: string[]
+  // Written by review (after gate, before commit)
+  reviewOutcome?: string // 'approved' | 'rejected' | 'needs_human'
+  reviewScore?: number
+  reviewReasons?: string[]
   // Written by gate
   gateGreenResult?: boolean
   gateOutput?: string
@@ -221,6 +235,60 @@ export class PrepareStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
   }
 }
 
+// ── Step 2b: guard ────────────────────────────────────────────────────────────
+// Runs the ConstitutionGuard on the work order. If blocked → task DISPUTED, end.
+// If requiresHuman (spec work) → sets guardRequiresReview=true, continues.
+
+export class GuardStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
+  readonly stepName = 'guard' as const
+  override retries = 0
+
+  async handle(input: DoneJsonObject, _ctx: StepExecutionContext) {
+    const cwd = process.cwd()
+    const runId = input.runId
+    const state = readState(cwd, runId)
+
+    const guard = makeConstitutionGuard()
+    // Represent the work order as a minimal Action-like GovernedItem
+    const workItem = {
+      name: state.taskId ?? 'unknown',
+      kind: 'action' as const,
+      description: state.detail ?? '',
+      type: state.trigger ?? 'unknown',
+      status: 'proposed' as const,
+      tags: [state.trigger ?? ''],
+      classifications: [],
+    }
+
+    const verdict = await guard.evaluate(workItem, { classifications: [] })
+
+    console.log(
+      `[guard] pid=${process.pid} allow=${verdict.allow} requiresHuman=${verdict.requiresHuman} reasons=[${verdict.reasons.join('; ')}]`,
+    )
+
+    if (!verdict.allow) {
+      await markTaskDisputed(
+        state.taskId!,
+        `Constitution blocked: ${verdict.reasons.join('; ')}`,
+      )
+      writeState(cwd, runId, {
+        guardAllow: false,
+        guardRequiresReview: false,
+        guardReasons: verdict.reasons,
+        disputed: true,
+      })
+      return doneOutput(runId, input.cycle)
+    }
+
+    writeState(cwd, runId, {
+      guardAllow: true,
+      guardRequiresReview: verdict.requiresHuman,
+      guardReasons: verdict.reasons,
+    })
+    return doneOutput(runId, input.cycle)
+  }
+}
+
 // ── Step 3: run-agent ─────────────────────────────────────────────────────────
 
 export class RunAgentStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
@@ -231,6 +299,13 @@ export class RunAgentStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
     const cwd = process.cwd()
     const runId = input.runId
     const state = readState(cwd, runId)
+
+    // Guard blocked — skip agent execution
+    if (state.disputed && state.guardAllow === false) {
+      console.log('[run-agent] Skipping — guard blocked this work order.')
+      return doneOutput(runId, input.cycle)
+    }
+
     const permProbe = spawnSync(
       'claude',
       ['--permission-mode', 'acceptEdits', '--version'],
@@ -353,6 +428,96 @@ export class GateStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
       gateOutput,
       disputed: false,
     })
+    return doneOutput(runId, input.cycle)
+  }
+}
+
+// ── Step 4b: review ───────────────────────────────────────────────────────────
+// After gate (gate GREEN), before commit.
+// For work orders flagged guardRequiresReview=true (spec/RFC work):
+//   run PerspectiveReviewer → if REJECT → rollback + task DISPUTED.
+//   if APPROVE → proceed; verdict recorded in state + later in log.
+// Allow-class work: no review, passes through.
+
+export class ReviewStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
+  readonly stepName = 'review' as const
+  override retries = 0
+
+  async handle(input: DoneJsonObject, _ctx: StepExecutionContext) {
+    const cwd = process.cwd()
+    const runId = input.runId
+    const state = readState(cwd, runId)
+
+    // Skip review if gate didn't pass or already disputed
+    if (!state.gateGreenResult || state.disputed) {
+      writeState(cwd, runId, {
+        reviewOutcome: 'skipped',
+        reviewReasons: ['gate did not pass — review skipped'],
+      })
+      return doneOutput(runId, input.cycle)
+    }
+
+    // Skip review for allow-class work (no RFC involvement)
+    if (!state.guardRequiresReview) {
+      writeState(cwd, runId, {
+        reviewOutcome: 'skipped',
+        reviewReasons: ['allow-class work — no perspective review required'],
+      })
+      return doneOutput(runId, input.cycle)
+    }
+
+    console.log(`[review] pid=${process.pid} Running perspective review...`)
+
+    // Build a Decision object from the work order for the reviewer
+    const decision: Decision = {
+      name: state.taskId ?? 'unknown',
+      kind: 'decision',
+      description: state.detail ?? '',
+      status: 'proposed',
+      tags: [state.trigger ?? ''],
+    }
+    if (state.prompt) {
+      decision.context = state.prompt.slice(0, 500)
+    }
+
+    const perspectives: Perspective[] = [
+      { name: 'redundancy', weight: 2 },
+      { name: 'spec-coherence', weight: 1 },
+      { name: 'scope', weight: 2 },
+    ]
+
+    const reviewer = makePerspectiveReviewer(cwd)
+    const decider = makeReviewDecider()
+
+    const matrix = await reviewer.review(decision, perspectives)
+    const reviewDecision = decider.decide(matrix, perspectives)
+
+    console.log(
+      `[review] pid=${process.pid} outcome=${reviewDecision.outcome} score=${reviewDecision.score.toFixed(2)} reasons=[${reviewDecision.reasons.join('; ')}]`,
+    )
+
+    writeState(cwd, runId, {
+      reviewOutcome: reviewDecision.outcome,
+      reviewScore: reviewDecision.score,
+      reviewReasons: reviewDecision.reasons,
+    })
+
+    if (reviewDecision.outcome === 'rejected') {
+      console.error('[review] REJECTED — rolling back cycle changes.')
+      const currentLines = gitPorcelain(cwd)
+      await rollback(cwd, state.snapshotLines ?? [], currentLines)
+      await markTaskDisputed(
+        state.taskId!,
+        `Perspective review rejected: ${reviewDecision.reasons.join('; ')}. Tradeoff matrix: ${JSON.stringify(matrix.verdicts)}`,
+      )
+      writeState(cwd, runId, {
+        disputed: true,
+        gateGreenResult: false, // prevent commit
+      })
+      return doneOutput(runId, input.cycle)
+    }
+
+    // approved or needs_human — proceed (log the verdict)
     return doneOutput(runId, input.cycle)
   }
 }
@@ -525,13 +690,23 @@ export class LogStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
         ? 'DISPUTED'
         : 'RED'
 
+    const reviewSummary =
+      state.reviewOutcome && state.reviewOutcome !== 'skipped'
+        ? ` | review=${state.reviewOutcome} score=${(state.reviewScore ?? 0).toFixed(2)} [${(state.reviewReasons ?? []).join('; ')}]`
+        : ''
+    const guardSummary =
+      state.guardAllow !== undefined
+        ? ` | guard=${state.guardAllow ? 'allow' : 'block'} requiresReview=${state.guardRequiresReview ?? false}`
+        : ''
+
     appendCycleLog(cwd, {
       cycle,
       timestamp: new Date().toISOString(),
       taskId: state.taskId ?? '(unknown)',
       taskTitle: state.taskTitle ?? '(unknown)',
       trigger: state.trigger ?? '(unknown)',
-      agentSummary: state.agentSummaryLine ?? '(none)',
+      agentSummary:
+        (state.agentSummaryLine ?? '(none)') + guardSummary + reviewSummary,
       gateResult: gateResultStr,
       commitHash: state.commitHash ?? state.preCommitHash ?? '',
       closureStatus: state.closureStatus ?? 'UNKNOWN',
@@ -560,8 +735,10 @@ export class LogStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
 
 export const scanStep = new ScanStep()
 export const prepareStep = new PrepareStep()
+export const guardStep = new GuardStep()
 export const agentStep = new RunAgentStep()
 export const gateStep = new GateStep()
+export const reviewStep = new ReviewStep()
 export const commitStep = new CommitStep()
 export const absorbStep = new AbsorbStep()
 export const verifyStep = new VerifyClosureStep()
@@ -577,9 +754,11 @@ export class EvolutionCycleWorkflow extends Workflow<TriggerJsonObject> {
   readonly steps = [
     step(scanStep),
     step(prepareStep, { dependsOn: [scanStep] }),
-    step(agentStep, { dependsOn: [prepareStep] }),
+    step(guardStep, { dependsOn: [prepareStep] }),
+    step(agentStep, { dependsOn: [guardStep] }),
     step(gateStep, { dependsOn: [agentStep] }),
-    step(commitStep, { dependsOn: [gateStep] }),
+    step(reviewStep, { dependsOn: [gateStep] }),
+    step(commitStep, { dependsOn: [reviewStep] }),
     step(absorbStep, { dependsOn: [commitStep] }),
     step(verifyStep, { dependsOn: [absorbStep] }),
     step(logStep, { dependsOn: [verifyStep] }),
