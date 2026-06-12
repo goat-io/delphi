@@ -1,0 +1,1 @@
+Read `CLAUDE.md` and `AGENT_HANDOVER.md` from the root of the project. Absorb their contents, then resume executing the remaining tasks listed in the handover, in order. Update `AGENT_HANDOVER.md` with your progress as you go.

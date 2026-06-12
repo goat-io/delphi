@@ -1,0 +1,22 @@
+{
+  "name": "@goatlab/delphi-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "biome check --write .",
+    "lint:check": "biome check .",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "@goatlab/delphi-protocol": "workspace:*",
+    "@goatlab/delphi-knowledge": "workspace:*",
+    "@goatlab/delphi-ingestion": "workspace:*",
+    "@goatlab/delphi-extraction": "workspace:*",
+    "@goatlab/delphi-indexer": "workspace:*",
+    "@goatlab/delphi-agent": "workspace:*",
+    "fastify": "^5.8.5",
+    "zod": "^4.4.3"
+  },
+  "license": "MIT"
+}

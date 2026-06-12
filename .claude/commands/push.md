@@ -1,0 +1,1 @@
+Please check all files that are currently changed (even if you havent changed them) commit them with a very solid commit message and the push it to the current branch. NEVER STASH! make sure that all files go to github without issues
