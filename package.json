@@ -21,7 +21,9 @@
     "format": "biome format --write packages/delphi-protocol packages/delphi-knowledge packages/delphi-ingestion packages/delphi-extraction packages/delphi-indexer packages/delphi-agent apps/api apps/mcp scripts tests",
     "evolve": "tsx scripts/evolve.ts",
     "evolve:loop": "tsx scripts/evolution-loop.ts",
-    "evolve:engine": "tsx scripts/evolution-workflow.ts"
+    "evolve:engine": "tsx scripts/evolution-workflow.ts",
+    "evolve:server": "tsx scripts/evolution-server.ts",
+    "evolve:worker": "tsx scripts/evolution-worker.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
@@ -38,6 +40,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",
     "@electric-sql/pglite": "^0.5.2",
+    "@electric-sql/pglite-socket": "^0.2.2",
     "@goatlab/delphi-core": "workspace:*",
     "fastify": "^5.8.5",
     "pg": "^8.21.0",

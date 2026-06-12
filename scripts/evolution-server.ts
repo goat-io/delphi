@@ -1,22 +1,22 @@
-// pnpm evolve:engine [--cycles N] [--executor pty|headless]
+// pnpm evolve:server [--cycles N] [--executor pty|headless] [--no-local-worker]
 //
-// Evolution loop running on @goatlab/delphi-core (the durable Postgres
-// workflow engine). Each knowledge-debt cycle is a persisted workflow run
-// with steps: scan → create-task → run-agent → gate → commit → absorb →
-// verify-closure → log.
+// Evolution engine server.
 //
-// Engine state lives in .delphi/engine (embedded PGlite — no live Postgres).
-// Brain state lives in .delphi/brain (existing PGlite instance, opened/closed
-// inside steps as the existing loop does).
+// Two modes:
+//   1. Embedded PGlite (default): boots PGlite at .delphi/engine and exposes it
+//      over the Postgres wire protocol via @electric-sql/pglite-socket on
+//      localhost:PGLITE_PORT (default 5444). Remote workers connect with:
+//        ENGINE_URL=postgres://localhost:5444/delphi pnpm evolve:worker
 //
-// Steps communicate through a shared JSON file written to .delphi/engine-cycle-{runId}.json
-// (ephemeral — written in scan, read/updated in subsequent steps, deleted on log).
-// This avoids the complex mapInput chain while still persisting each step's work.
+//   2. Real Postgres (DATABASE_URL set): skips pglite-socket entirely and uses
+//      DATABASE_URL for the engine DB. True multi-machine topology.
 //
-// Step definitions live in evolution-steps.ts (shared with evolution-server.ts
-// and evolution-worker.ts for the remote-worker topology).
+// The server enqueues --cycles evolution-cycle workflow runs then waits for
+// completion. By default it also starts an in-process worker (pass
+// --no-local-worker to rely exclusively on remote workers).
+//
+// Gate: pnpm typecheck && pnpm lint:check && pnpm test (56 tests must stay green).
 
-import { spawnSync } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
@@ -31,52 +31,109 @@ import {
   readState,
   startWorker,
 } from './evolution-steps.js'
-import { createEngineDb, execMultiStatement } from './pglite-db-client.js'
+import { execMultiStatement } from './pglite-db-client.js'
+
+// ── Arg parsing ───────────────────────────────────────────────────────────────
+
+function parseServerArgs(argv: string[]): {
+  cycles: number
+  executor: string
+  noLocalWorker: boolean
+  dryRun: boolean
+} {
+  const base = parseArgs(argv)
+  const noLocalWorker =
+    argv.includes('--no-local-worker') || argv.includes('--no-worker')
+  return {
+    cycles: base.cycles,
+    executor: base.executor,
+    noLocalWorker,
+    dryRun: base.dryRun,
+  }
+}
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2))
+  const args = parseServerArgs(process.argv.slice(2))
   const cwd = process.cwd()
 
+  const pglitePort = Number(process.env.PGLITE_PORT ?? 5444)
+  const useRealPostgres = Boolean(process.env.DATABASE_URL)
+
   console.log(
-    `\n╔══ Delphi Evolution Engine ══════════════════════════════════════╗`,
+    `\n╔══ Delphi Evolution Server ═════════════════════════════════════╗`,
   )
   console.log(
-    `║  cycles=${args.cycles}  executor=${args.executor}  engine=@goatlab/delphi-core`,
+    `║  pid=${process.pid}  cycles=${args.cycles}  executor=${args.executor}`,
   )
+  console.log(
+    `║  mode=${useRealPostgres ? 'real-postgres (DATABASE_URL)' : `pglite-socket :${pglitePort}`}`,
+  )
+  console.log(`║  localWorker=${!args.noLocalWorker}`)
   console.log(
     `╚═════════════════════════════════════════════════════════════════╝\n`,
   )
 
-  // Verify claude CLI exists
-  const versionCheck = spawnSync('claude', ['--version'], { encoding: 'utf8' })
-  if (versionCheck.error || versionCheck.status !== 0) {
-    console.error('ERROR: `claude` CLI not found.')
-    process.exit(1)
-  }
-  console.log(`claude CLI: ${(versionCheck.stdout ?? '').trim()}`)
-
-  // Override executor env for agent steps
   if (args.executor) {
     process.env.AGENT_EXECUTOR = args.executor
   }
 
-  // Ensure engine data dir exists
   const engineDataDir = resolve(cwd, '.delphi/engine')
   mkdirSync(engineDataDir, { recursive: true })
 
-  // Boot the engine with embedded PGlite
-  console.log(`\nBooting engine (PGlite at ${engineDataDir})...`)
-  const { db, close: closeEngineDb } = await createEngineDb(engineDataDir)
+  let db: any
+  let closeEngineDb: () => Promise<void>
+  let socketServer: any = null
 
-  // Create engine tables (PGlite can't execute multi-statement in one call)
-  await execMultiStatement(db, CREATE_TABLES_SQL)
+  if (useRealPostgres) {
+    // Real Postgres: use pg pool directly via DATABASE_URL
+    console.log(`Using real Postgres: ${process.env.DATABASE_URL}`)
+    const { Pool } = await import('pg')
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL })
+    const { createDbClient } = await import('@goatlab/delphi-core')
+    db = createDbClient(pool)
+    closeEngineDb = async () => {
+      await db.destroy?.()
+    }
+  } else {
+    // Embedded PGlite + socket server
+    console.log(`Booting PGlite at ${engineDataDir}...`)
+    const { PGlite } = await import('@electric-sql/pglite')
+    const pgliteInstance = new PGlite(engineDataDir)
+
+    // Import the socket server
+    const { PGLiteSocketServer } = await import('@electric-sql/pglite-socket')
+    // maxConnections: 3 — allows one active poll connection from the remote worker
+    // plus one spare for the self-test or connection pool warmup. PGlite still
+    // serialises all queries internally, so higher maxConnections is safe.
+    socketServer = new PGLiteSocketServer({
+      db: pgliteInstance,
+      port: pglitePort,
+      host: '127.0.0.1',
+      maxConnections: 3,
+    })
+    await socketServer.start()
+    console.log(
+      `PGlite socket server listening on postgres://127.0.0.1:${pglitePort}/delphi`,
+    )
+    console.log(
+      `Remote workers: ENGINE_URL=postgres://127.0.0.1:${pglitePort}/delphi pnpm evolve:worker`,
+    )
+
+    // Use the PGlite-backed DbClient for the engine (same instance)
+    const { createPGliteDbClient } = await import('./pglite-db-client.js')
+    db = createPGliteDbClient(pgliteInstance as any)
+    closeEngineDb = async () => {
+      await db.destroy?.()
+    }
+  }
+
   // Run schema migrations
+  await execMultiStatement(db, CREATE_TABLES_SQL)
   await runMigrations(db)
 
   // Build the typed engine
-  // No pgPool → polling dispatch + batch INSERT (no COPY FROM, no LISTEN/NOTIFY)
   const engine = createEngine({
     database: db,
     workflows: [new EvolutionCycleWorkflow()] as const,
@@ -88,10 +145,18 @@ async function main(): Promise<void> {
     },
   })
 
-  // Start in-process worker
-  const stopWorker = await startWorker(engine)
+  // Optionally start in-process worker
+  let stopWorker: (() => Promise<void>) | null = null
+  if (!args.noLocalWorker) {
+    console.log('Starting local in-process worker...')
+    stopWorker = await startWorker(engine)
+  } else {
+    console.log(
+      'No local worker — waiting for remote workers to claim steps...',
+    )
+  }
 
-  // Summary table
+  // Summary
   const summary: Array<{
     cycle: number
     runId: string
@@ -113,16 +178,16 @@ async function main(): Promise<void> {
         break
       }
 
-      // Pre-generate a runId so steps can locate the shared state file
       const runId = nanoId()
 
-      // Start the workflow run
       const { runId: engineRunId } = await engine['evolution-cycle'].start({
         cycle,
         executor: args.executor,
-        runId, // passed through so steps can find the state file
+        runId,
       })
-      console.log(`Engine run started: ${engineRunId}`)
+      console.log(
+        `[server] Engine run started: ${engineRunId} (state runId: ${runId})`,
+      )
 
       // Poll for completion
       const timeoutMs = 35 * 60 * 1000
@@ -145,20 +210,19 @@ async function main(): Promise<void> {
         )
         if (runningSteps.length > 0) {
           process.stdout.write(
-            `\r[engine] running: ${runningSteps.map(s => s.stepName).join(', ')}    `,
+            `\r[server] running: ${runningSteps.map((s: any) => s.stepName).join(', ')}    `,
           )
         }
       }
       process.stdout.write('\n')
 
       if (!finalStatus) {
-        console.error(`[engine] Run ${engineRunId} timed out`)
+        console.error(`[server] Run ${engineRunId} timed out`)
         finalStatus = (await engine['evolution-cycle'].getStatus(
           engineRunId,
         )) as any
       }
 
-      // Print step status table
       const steps = ((finalStatus?.steps as any[]) ?? []) as Array<{
         stepName: string
         status: string
@@ -189,14 +253,17 @@ async function main(): Promise<void> {
           console.log(`  ERROR: ${s.error.slice(0, 120)}`)
         }
         if (durationMs !== undefined) {
-          stepStatuses.push({ name: s.stepName, status: s.status, durationMs })
+          stepStatuses.push({
+            name: s.stepName,
+            status: s.status,
+            durationMs,
+          })
         } else {
           stepStatuses.push({ name: s.stepName, status: s.status })
         }
       }
       console.log(`\nRun status: ${finalStatus?.status ?? 'UNKNOWN'}`)
 
-      // Read final state for summary
       const finalState = readState(cwd, runId)
       const trigger = finalState.trigger ?? '(unknown)'
       const title = finalState.targetTitle ?? '(unknown)'
@@ -218,16 +285,21 @@ async function main(): Promise<void> {
       })
     }
   } finally {
-    console.log('\nShutting down engine...')
-    await stopWorker()
+    console.log('\nShutting down server...')
+    if (stopWorker) {
+      await stopWorker()
+    }
     await engine.shutdown().catch(() => {})
     await engine.ingestBuffer.shutdown().catch(() => {})
     await closeEngineDb().catch(() => {})
+    if (socketServer) {
+      await socketServer.stop().catch(() => {})
+      console.log('PGlite socket server stopped.')
+    }
   }
 
-  // Summary
   console.log(`\n${'═'.repeat(70)}`)
-  console.log('EVOLUTION ENGINE SUMMARY')
+  console.log('EVOLUTION SERVER SUMMARY')
   console.log(`${'═'.repeat(70)}`)
   console.log(
     `${'CYC'.padEnd(5)} ${'TRIGGER'.padEnd(20)} ${'GATE'.padEnd(10)} ${'CLOSURE'.padEnd(14)} TITLE`,

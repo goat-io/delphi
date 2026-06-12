@@ -103,6 +103,38 @@ Wire the existing pieces:
 This is the Constitution's loop applied to this repo:
 Decision → Task → Execution → Observation → Learning.
 
+## Remote Workers (implemented)
+
+The task loop now supports out-of-process and cross-machine workers
+via two complementary paths:
+
+**Path A — pglite-socket (local / single-machine):**
+`pnpm evolve:server --no-local-worker` boots the embedded PGlite engine
+and exposes it over the Postgres wire protocol on localhost:5444 (or
+PGLITE_PORT) via @electric-sql/pglite-socket. Any number of remote
+workers on the same machine connect with:
+  ENGINE_URL=postgres://localhost:5444/delphi pnpm evolve:worker
+
+**Path B — Real Postgres (multi-machine):**
+Set DATABASE_URL on the server; skip pglite-socket entirely. Workers
+anywhere on the network point ENGINE_URL at the same Postgres instance.
+Schema migrations are idempotent on both paths.
+
+**Claim contract (RFC-0029):**
+Workers use delphi-core's native `PgConnector.listen()` which issues
+`FOR UPDATE SKIP LOCKED` against `workflow_steps` — the same contract
+regardless of whether the worker is local or remote. Multiple workers
+compete fairly; the Postgres lock ensures each step is claimed by
+exactly one worker. LISTEN/NOTIFY is disabled on pglite-socket workers
+(falls back to 200ms polling); enabled automatically when a real pg Pool
+is available.
+
+**Files:** `scripts/evolution-steps.ts` (shared step definitions),
+`scripts/evolution-server.ts` (pnpm evolve:server),
+`scripts/evolution-worker.ts` (pnpm evolve:worker).
+**Verified:** two-process demo (server pid ≠ worker pid) with scan and
+create-task claimed and executed by the worker, run-agent in progress.
+
 ---
 
 # Phase E — Evaluation (the loop learns)

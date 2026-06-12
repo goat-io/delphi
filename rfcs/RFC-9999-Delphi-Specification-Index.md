@@ -184,6 +184,8 @@ RFC-0020 Works, Assets & Knowledge Extraction
 
 RFC-0027 Extraction & Entity Resolution
 
+RFC-0031 Candidate Staging Protocol
+
 RFC-0021 Epistemology & Truth Model
 
 RFC-0022 Dependency & Impact Propagation
@@ -191,6 +193,8 @@ RFC-0022 Dependency & Impact Propagation
 These define:
 
 How artifacts become knowledge without duplication.
+
+How candidates are held, reviewed, and resolved before canonicalization.
 
 How truth and uncertainty are modeled.
 
