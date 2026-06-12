@@ -102,3 +102,47 @@ The changes are purely markdown (two `.md` files in `rfcs/`) — no TypeScript t
 WORK COMPLETE: drafted RFC-0029 (Task Execution Protocol) covering agent claim contracts, progress reporting, closure verification, and failure handling; updated RFC-9999 Phase 11 reading order, dependency graph, and spec status line to reference RFC-0029.
 
 Gate GREEN
+[main 2c4952a] evolve(cycle 2): [SPEC_GAP] --- A Task is a unit of future work
+ Committer: Ignacio Cabrera <igca@Ignacios-MacBook-Pro-2.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 4 files changed, 366 insertions(+), 1 deletion(-)
+ create mode 100644 evolution.log.md
+ create mode 100644 rfcs/RFC-0029-Task-Execution-Protocol.md
+
+Running pnpm brain:bootstrap...
+$ tsx scripts/bootstrap-brain.ts
+[bootstrap] Reusing existing brain: brain_8c16f71c024d4c8c999e18b1
+[bootstrap] Regions: Spec, Knowledge Plane, Execution Plane, Decisions, Operations
+[bootstrap] Ingesting 34 RFC files → "Spec"
+[bootstrap] Ingesting 2 ops files → "Operations"
+[bootstrap] Ingesting 8 knowledge-plane READMEs → "Knowledge Plane"
+[bootstrap] Ingesting 7 execution-plane docs → "Execution Plane"
+[bootstrap] Detecting hub regions...
+[bootstrap] Generating indexes (stale only)...
+[bootstrap] Generating maps...
+
+[bootstrap] Index summaries:
+  [Spec] Spec: 792 leaves, 407 beliefs, 177 open questions.
+
+[bootstrap] Health:
+  leaves:        947
+  beliefs:       530
+  evidence:      1647
+  relationships: 39
+  staleIndexes:  0
+  openQuestions: 178
+
+[bootstrap] Totals: created=34 merged=52 skippedAssets=49
+
+Closure: UNVERIFIED
