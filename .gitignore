@@ -4,3 +4,4 @@ dist/
 .delphi/
 *.log
 .DS_Store
+evolution-run*.out

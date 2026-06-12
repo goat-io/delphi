@@ -116,12 +116,42 @@ async function runAgentHeadless(
 }
 
 /**
+ * Detect PTY failure from spawn output / exit code.
+ * Returns a non-empty reason string if the result looks like a PTY failure.
+ */
+function detectPtyFailure(
+  output: string,
+  code: number | null,
+  sessionFileAppeared: boolean,
+): string | null {
+  if (
+    output.includes('tcgetattr') ||
+    output.includes('Operation not supported')
+  ) {
+    return 'tcgetattr/ioctl not supported (not a real TTY)'
+  }
+  if (code !== 0 && code !== null) {
+    return `script exited with code ${code}`
+  }
+  if (!sessionFileAppeared) {
+    return 'no new session JSONL appeared within 30s'
+  }
+  if (output.trim() === '') {
+    return 'empty output from PTY executor'
+  }
+  return null
+}
+
+/**
  * PTY executor fallback: uses macOS `script -q /dev/null` to allocate a real
  * TTY, then watches the newest session JSONL under
  * ~/.claude/projects/<encoded-cwd>/ for the final assistant message + idle.
  *
  * This is the path taken when claude-pty-wrapper's dist is unavailable.
  * Keeps usage on the Claude subscription (interactive session).
+ *
+ * On PTY failure (tcgetattr error, bad exit code, no session file, empty
+ * output), falls through to the headless executor automatically.
  */
 async function runAgentPtyFallback(
   prompt: string,
@@ -152,13 +182,19 @@ async function runAgentPtyFallback(
   // script -q /dev/null <claude-bin> [flags] allocates a PTY
   const scriptArgs = ['-q', '/dev/null', ...claudeArgs]
 
-  return new Promise(resolve_ => {
+  const ptyResult = await new Promise<{
+    output: string
+    code: number | null
+    sessionFileAppeared: boolean
+  }>(resolve_ => {
     const chunks: string[] = []
+    const errChunks: string[] = []
     let timedOut = false
+    let sessionFileAppeared = false
 
     const proc = spawn('script', scriptArgs, {
       cwd,
-      stdio: ['pipe', 'pipe', 'inherit'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env },
     })
 
@@ -166,6 +202,12 @@ async function runAgentPtyFallback(
       const text = chunk.toString()
       process.stdout.write(text)
       chunks.push(text)
+    })
+
+    proc.stderr?.on('data', (chunk: Buffer) => {
+      const text = chunk.toString()
+      process.stderr.write(text)
+      errChunks.push(text)
     })
 
     const globalTimer = setTimeout(() => {
@@ -189,6 +231,12 @@ async function runAgentPtyFallback(
     let idleCount = 0
     const IDLE_POLLS_REQUIRED = 3 // ~9 seconds of no new content
 
+    // Session file watcher: give it 30s to appear
+    const SESSION_FILE_DEADLINE = 30_000
+    const sessionFileTimer = setTimeout(() => {
+      // Will be checked in detectPtyFailure via sessionFileAppeared flag
+    }, SESSION_FILE_DEADLINE)
+
     const checkCompletion = () => {
       // Find the newest JSONL that appeared after our snapshot
       let candidateFiles: string[] = []
@@ -201,6 +249,10 @@ async function runAgentPtyFallback(
           : []
       } catch {
         return
+      }
+
+      if (candidateFiles.length > 0) {
+        sessionFileAppeared = true
       }
 
       if (candidateFiles.length === 0) {
@@ -274,6 +326,7 @@ async function runAgentPtyFallback(
     proc.on('close', code => {
       clearTimeout(globalTimer)
       clearTimeout(startupDelay)
+      clearTimeout(sessionFileTimer)
       if (pollInterval) {
         clearInterval(pollInterval)
       }
@@ -282,10 +335,43 @@ async function runAgentPtyFallback(
         console.warn('[PTY] Agent timed out')
       }
 
-      const output = chunks.join('')
-      resolve_({ output, ok: !timedOut && code === 0 })
+      resolve_({
+        output: chunks.join('') + errChunks.join(''),
+        code,
+        sessionFileAppeared:
+          sessionFileAppeared ||
+          (() => {
+            // Final check at close time
+            try {
+              return existsSync(sessionDir)
+                ? readdirSync(sessionDir)
+                    .filter(f => f.endsWith('.jsonl'))
+                    .map(f => join(sessionDir, f))
+                    .filter(f => !preFiles.includes(f)).length > 0
+                : false
+            } catch {
+              return false
+            }
+          })(),
+      })
     })
   })
+
+  // Check if PTY actually worked
+  const ptyFailureReason = detectPtyFailure(
+    ptyResult.output,
+    ptyResult.code,
+    ptyResult.sessionFileAppeared,
+  )
+
+  if (ptyFailureReason) {
+    console.warn(
+      `[executor] PTY unavailable (${ptyFailureReason}) — falling back to headless`,
+    )
+    return runAgentHeadless(prompt, cwd, hasPermissionMode, timeoutMs)
+  }
+
+  return { output: ptyResult.output, ok: ptyResult.code === 0 }
 }
 
 /**
@@ -310,18 +396,18 @@ export async function runAgent(
     )
   }
 
-  // PTY path
+  // PTY path — runAgentPtyFallback handles its own fallback to headless
+  // on any PTY failure (tcgetattr, bad exit code, no session file, empty output).
   try {
-    const result = await runAgentPtyFallback(
+    return await runAgentPtyFallback(
       prompt,
       opts.cwd,
       opts.hasPermissionMode,
       opts.timeoutMs,
     )
-    return result
   } catch (err) {
     console.warn(
-      `[PTY] PTY executor failed (${(err as Error).message}) — falling back to headless for this cycle`,
+      `[PTY] PTY executor threw (${(err as Error).message}) — falling back to headless`,
     )
     return runAgentHeadless(
       prompt,
@@ -643,6 +729,53 @@ async function main(): Promise<void> {
         .split('\n')
         .reverse()
         .find(l => l.includes('WORK COMPLETE:')) ?? '(no summary)'
+
+    // 4b. Empty-cycle guard: if no files changed AND no WORK COMPLETE marker,
+    //     the agent produced no work — mark DISPUTED and skip gate + commit.
+    const postAgentLines = gitPorcelain(cwd)
+    const changedFiles = postAgentLines.filter(l => !snapshotLines.includes(l))
+    const hasWorkComplete = agentResult.output.includes('WORK COMPLETE')
+
+    if (changedFiles.length === 0 && !hasWorkComplete) {
+      console.warn(
+        '\n[empty-cycle guard] Agent produced no file changes and no WORK COMPLETE marker.',
+      )
+      const { store: sDisp, db: dbDisp } = await openStore(dataDir)
+      try {
+        await sDisp.updateLeaf(task.id, {
+          status: 'DISPUTED' as 'ACTIVE',
+          content: {
+            ...((task.content as Record<string, unknown>) ?? {}),
+            blocked: 'agent produced no work',
+          },
+        })
+      } finally {
+        await (dbDisp as { close(): Promise<void> }).close()
+      }
+
+      appendCycleLog(cwd, {
+        cycle,
+        timestamp: new Date().toISOString(),
+        taskId: task.id,
+        taskTitle: task.title,
+        trigger: top.trigger,
+        agentSummary: '(no work produced — empty cycle)',
+        gateResult: 'SKIPPED',
+        commitHash: preCommitHash,
+        closureStatus: 'DISPUTED',
+        healthBefore: healthBeforeStr,
+        healthAfter: healthBeforeStr,
+      })
+
+      summary.push({
+        cycle,
+        trigger: top.trigger,
+        title: top.targetTitle,
+        gate: 'SKIPPED',
+        closure: 'DISPUTED',
+      })
+      continue
+    }
 
     // 5. Gate
     let gateResult = runGate(cwd)
