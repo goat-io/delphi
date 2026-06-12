@@ -204,11 +204,15 @@ RFC-0025 Ontology Evolution & Governance
 
 RFC-0026 Tasks & Questions
 
+RFC-0029 Task Execution Protocol
+
 These define:
 
 How classification evolves.
 
 How uncertainty becomes work.
+
+How agents claim, execute, and close tasks.
 
 ---
 
@@ -241,6 +245,7 @@ RFC-0000
 │   ├── RFC-0007
 │   ├── RFC-0008
 │   │   └── RFC-0026
+│   │       └── RFC-0029
 │   ├── RFC-0013
 │   ├── RFC-0009
 │   ├── RFC-0014
@@ -363,7 +368,7 @@ RFC-0000
 
 # Specification Status
 
-All RFCs through RFC-0028 are written (Status: Draft).
+All RFCs through RFC-0029 are written (Status: Draft).
 
 Implementation documents:
 
