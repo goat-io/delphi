@@ -179,6 +179,38 @@ export async function bootstrapBrain(opts: {
     }
   }
 
+  // 4d. docs/execution-plane/*.md → "Execution Plane"
+  const epRegionId = regionMap.get('Execution Plane')!
+  const epDir = resolve(repoRoot, 'docs', 'execution-plane')
+  if (existsSync(epDir)) {
+    const epFiles = (await readdir(epDir))
+      .filter(f => f.endsWith('.md'))
+      .map(f => resolve(epDir, f))
+
+    log(
+      `[bootstrap] Ingesting ${epFiles.length} execution-plane docs → "Execution Plane"`,
+    )
+    for (const filePath of epFiles) {
+      const result = await ingestFile(store, brainId, filePath)
+      if (result.skipped) {
+        skippedAssets++
+        continue
+      }
+      if (result.asset && result.chunks.length > 0) {
+        const r = await extractAsset(
+          store,
+          brainId,
+          extractor,
+          result.asset,
+          result.chunks,
+          { defaultRegionId: epRegionId },
+        )
+        totalCreated += r.created
+        totalMerged += r.merged
+      }
+    }
+  }
+
   // 5. Hub detection, index generation, map generation
   log('[bootstrap] Detecting hub regions...')
   await detectHubRegions(store, brainId, { degreeThreshold: 6 })
