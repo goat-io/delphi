@@ -5,7 +5,12 @@ import { ensureSeededRegions } from '@goatlab/delphi-indexer'
 import { BrainStore, createDb, migrate } from '@goatlab/delphi-knowledge'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { DebtItem } from '../scripts/evolve.js'
-import { closeTask, createTaskFromDebt, scanDebt } from '../scripts/evolve.js'
+import {
+  buildWorkPrompt,
+  closeTask,
+  createTaskFromDebt,
+  scanDebt,
+} from '../scripts/evolve.js'
 
 let store: BrainStore
 let brainId: string
@@ -187,5 +192,133 @@ describe('evolve harness', () => {
     expect(newTask.id).not.toBe(createdTaskId)
     expect(newTask.kind).toBe('TASK')
     expect(newTask.status).toBe('ACTIVE')
+  })
+
+  it('5. noise filter: noisy QUESTION leaves excluded, real question included in OPEN_QUESTION debt', async () => {
+    const specRegion = await store.getRegionByTitle(brainId, 'Spec')
+    const specRegionId = specRegion?.id
+
+    // Noise: starts with "-", short, < 4 words
+    await store.createLeaf({
+      brainId,
+      kind: 'QUESTION',
+      status: 'ACTIVE',
+      title: '- What supports it?',
+      aliases: [],
+      tags: [],
+      regionId: specRegionId,
+    })
+
+    // Real question: ends with "?", >25 chars, ≥4 words, no noise prefix
+    await store.createLeaf({
+      brainId,
+      kind: 'QUESTION',
+      status: 'ACTIVE',
+      title:
+        'How does confidence propagate across federated brains in practice?',
+      aliases: [],
+      tags: [],
+      regionId: specRegionId,
+    })
+
+    const debt = await scanDebt(store, brainId)
+    const openQuestionItems = debt.filter(d => d.trigger === 'OPEN_QUESTION')
+
+    const titles = openQuestionItems.map(d => d.targetTitle)
+    expect(titles).toContain(
+      'How does confidence propagate across federated brains in practice?',
+    )
+    expect(titles).not.toContain('- What supports it?')
+  })
+
+  it('6. SPEC_GAP: BELIEF with "future work" statement surfaces as SPEC_GAP item (priority 30)', async () => {
+    const specRegion = await store.getRegionByTitle(brainId, 'Spec')
+    const specRegionId = specRegion?.id
+
+    await store.createLeaf({
+      brainId,
+      kind: 'BELIEF',
+      status: 'ACTIVE',
+      title: 'Markdown import/export bridge',
+      statement:
+        'A markdown import/export bridge is future work, recorded here.',
+      aliases: [],
+      tags: [],
+      regionId: specRegionId,
+    })
+
+    const debt = await scanDebt(store, brainId)
+    const specGapItem = debt.find(d => d.trigger === 'SPEC_GAP')
+
+    expect(specGapItem).toBeDefined()
+    expect(specGapItem?.priority).toBe(30)
+    expect(specGapItem?.target).toBeTruthy()
+  })
+
+  it('7. buildWorkPrompt: EMPTY_REGION contains closure criteria and WORK COMPLETE rule; SPEC_GAP contains RFC-9999', async () => {
+    const emptyItem: DebtItem = {
+      trigger: 'EMPTY_REGION',
+      target: 'region-test-id',
+      targetTitle: 'Test Region',
+      detail: "seeded region 'Test Region' has no knowledge — navigation debt",
+      priority: 100,
+    }
+
+    const fakeTask = {
+      id: 'task-test-001',
+      kind: 'TASK' as const,
+      status: 'ACTIVE' as const,
+      title: '[EMPTY_REGION] Test Region',
+      brainId,
+      aliases: [],
+      tags: [],
+      version: 1,
+      content: {
+        trigger: 'EMPTY_REGION',
+        target: 'region-test-id',
+        priority: 100,
+        origin: 'evolve-harness',
+        closureCriteria: 'region has ≥5 leaves and an index after re-bootstrap',
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+
+    const promptEmpty = buildWorkPrompt(
+      emptyItem,
+      fakeTask as Parameters<typeof buildWorkPrompt>[1],
+    )
+    expect(promptEmpty).toContain('region has ≥5 leaves')
+    expect(promptEmpty).toContain('WORK COMPLETE')
+    expect(promptEmpty).toContain('Do NOT git commit')
+
+    const specGapItem: DebtItem = {
+      trigger: 'SPEC_GAP',
+      target: 'leaf-spec-gap-001',
+      targetTitle: 'Markdown import/export bridge',
+      detail:
+        'spec gap: "A markdown import/export bridge is future work, recorded here."',
+      priority: 30,
+    }
+
+    const specGapTask = {
+      ...fakeTask,
+      id: 'task-spec-gap-001',
+      title: '[SPEC_GAP] Markdown import/export bridge',
+      content: {
+        trigger: 'SPEC_GAP',
+        target: 'leaf-spec-gap-001',
+        priority: 30,
+        origin: 'evolve-harness',
+        closureCriteria:
+          'a new RFC draft exists in rfcs/ addressing the gap and RFC-9999 references it',
+      },
+    }
+
+    const promptSpecGap = buildWorkPrompt(
+      specGapItem,
+      specGapTask as Parameters<typeof buildWorkPrompt>[1],
+    )
+    expect(promptSpecGap).toContain('RFC-9999')
   })
 })

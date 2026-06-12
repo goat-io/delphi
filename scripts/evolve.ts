@@ -12,6 +12,7 @@ export type DebtTrigger =
   | 'ORPHAN_BELIEFS'
   | 'FLAGGED_LEAVES'
   | 'STALE_INDEXES'
+  | 'SPEC_GAP'
   | 'OPEN_QUESTION'
 
 export interface DebtItem {
@@ -34,6 +35,8 @@ function closureFor(trigger: DebtTrigger): string {
       return 'no leaves remain in PROPOSED'
     case 'STALE_INDEXES':
       return 'staleIndexes === 0'
+    case 'SPEC_GAP':
+      return 'a new RFC draft exists in rfcs/ addressing the gap and RFC-9999 references it'
     case 'OPEN_QUESTION':
       return 'question answered with ≥1 evidence-backed belief'
   }
@@ -106,9 +109,59 @@ export async function scanDebt(
     })
   }
 
-  // OPEN_QUESTION (priority 20): up to 3 QUESTION leaves with ACTIVE status
+  // SPEC_GAP (priority 30): leaves mentioning spec gaps
+  const specGapQueries = [
+    'no RFC yet',
+    'future work',
+    'Candidate for a future RFC',
+  ]
+  const specGapLeafMap = new Map<string, Leaf>()
+  for (const query of specGapQueries) {
+    const hits = await store.searchLeaves(brainId, query, 5)
+    for (const leaf of hits) {
+      if (!specGapLeafMap.has(leaf.id)) {
+        specGapLeafMap.set(leaf.id, leaf)
+      }
+      if (specGapLeafMap.size >= 3) {
+        break
+      }
+    }
+    if (specGapLeafMap.size >= 3) {
+      break
+    }
+  }
+  for (const leaf of specGapLeafMap.values()) {
+    const gapText = ((leaf.statement ?? leaf.title) as string).slice(0, 120)
+    items.push({
+      trigger: 'SPEC_GAP',
+      target: leaf.id,
+      targetTitle: (leaf.title as string).slice(0, 80),
+      detail: `spec gap: "${gapText}"`,
+      priority: 30,
+    })
+  }
+
+  // OPEN_QUESTION (priority 20): up to 3 QUESTION leaves with ACTIVE status, noise-filtered
   const activeQuestions = leaves
-    .filter(l => l.kind === 'QUESTION' && l.status === 'ACTIVE')
+    .filter(l => {
+      if (l.kind !== 'QUESTION' || l.status !== 'ACTIVE') {
+        return false
+      }
+      const t = l.title
+      if (!t.endsWith('?')) {
+        return false
+      }
+      if (t.length <= 25) {
+        return false
+      }
+      if (t.startsWith('-') || t.startsWith('Core questions')) {
+        return false
+      }
+      if (t.trim().split(/\s+/).length < 4) {
+        return false
+      }
+      return true
+    })
     .slice(0, 3)
 
   for (const q of activeQuestions) {
@@ -232,6 +285,70 @@ export async function closeTask(
   })
 
   return { task, decision }
+}
+
+// ── buildWorkPrompt ───────────────────────────────────────────────────────────
+
+const HARD_RULES = `
+HARD RULES (non-negotiable):
+- Never rename or version-bump packages.
+- Never touch packages/delphi-{core,ai,brain,bun,express,governance,langgraph,sandbox,trpc,ui} or realtime-broker.
+- Never edit .delphi/ directory.
+- Keep \`pnpm typecheck && pnpm lint:check && pnpm test\` green at all times.
+- Do NOT git commit or git push — the evolution loop does that.
+- End your work by printing exactly: WORK COMPLETE: <one-line summary>
+`.trim()
+
+const COMMON_HEADER = `
+You are a headless agent working in the Delphi monorepo (pnpm workspace, ESM, strict TypeScript, biome, vitest).
+The specification lives in rfcs/. Consult AGENTS.md for system philosophy and conventions.
+Your changes will be verified by the gate (\`pnpm typecheck && pnpm lint:check && pnpm test\`) and absorbed via \`pnpm brain:bootstrap\`.
+`.trim()
+
+export function buildWorkPrompt(item: DebtItem, task: Leaf): string {
+  const taskId = task.id
+  const closure = closureFor(item.trigger)
+
+  const header = `${COMMON_HEADER}
+
+Task ID: ${taskId}
+Trigger: ${item.trigger}
+Target: ${item.targetTitle}
+Closure criteria: ${closure}
+
+${HARD_RULES}`
+
+  let body: string
+
+  switch (item.trigger) {
+    case 'EMPTY_REGION':
+      body = `The knowledge region '${item.targetTitle}' of this repo's Brain is empty. Write ingestion-grade documentation that fills it: factual declarative markdown with YAML frontmatter (name, description, owner: engineering, status: active). For 'Execution Plane': write docs/execution-plane/<package>.md files (one per migrated package: delphi-core, delphi-ai, delphi-langgraph, delphi-sandbox, delphi-ui, delphi-brain, delphi-governance — read each package's README/src first; 30-50 lines each, every claim verifiable). Also add the docs/execution-plane/*.md glob to the source list in scripts/bootstrap-brain.ts mapped to the 'Execution Plane' region (follow the existing sources structure). For other regions: write docs/<kebab-title>/overview.md similarly mapped.`
+      break
+
+    case 'OPEN_QUESTION': {
+      const kebab = item.targetTitle
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 60)
+      body = `Research this open question from the Brain: '${item.targetTitle}'. First judge: is it a real open question or extraction noise (rhetorical fragment)? If noise: state so in research/${kebab}.md with frontmatter and a one-line verdict (this curates the Brain). If real: research it against rfcs/ and the codebase, write research/${kebab}.md: frontmatter + your answer as declarative sentences + an Evidence section citing specific RFC files/sections. Ensure scripts/bootstrap-brain.ts ingests research/*.md into the 'Spec' region (add the glob if absent).`
+      break
+    }
+
+    case 'SPEC_GAP':
+      body = `The Brain surfaced a spec gap: ${item.detail}. Draft the missing RFC in rfcs/ following the existing house style EXACTLY (read rfcs/RFC-0026 as the style reference: Status: Draft, Depends On, Purpose, Core Principle, sections, Canonical Rules, Success Criteria). Choose the next free RFC number (ls rfcs/). Keep it focused (~150-250 lines). Update rfcs/RFC-9999-Delphi-Specification-Index.md: add it to the reading order phase that fits and the dependency graph, and remove the corresponding entry from 'Known open areas' if present.`
+      break
+
+    case 'ORPHAN_BELIEFS':
+    case 'FLAGGED_LEAVES':
+    case 'STALE_INDEXES':
+      body = `Maintenance: run \`pnpm brain:bootstrap\` and report; if the issue persists, write a research/ note describing root cause.`
+      break
+  }
+
+  return `${header}
+
+${body}`
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────

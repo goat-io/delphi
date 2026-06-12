@@ -19,7 +19,8 @@
     "lint": "biome check --write packages/delphi-protocol packages/delphi-knowledge packages/delphi-ingestion packages/delphi-extraction packages/delphi-indexer packages/delphi-agent apps/api apps/mcp scripts tests",
     "lint:check": "biome check packages/delphi-protocol packages/delphi-knowledge packages/delphi-ingestion packages/delphi-extraction packages/delphi-indexer packages/delphi-agent apps/api apps/mcp scripts tests",
     "format": "biome format --write packages/delphi-protocol packages/delphi-knowledge packages/delphi-ingestion packages/delphi-extraction packages/delphi-indexer packages/delphi-agent apps/api apps/mcp scripts tests",
-    "evolve": "tsx scripts/evolve.ts"
+    "evolve": "tsx scripts/evolve.ts",
+    "evolve:loop": "tsx scripts/evolution-loop.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
