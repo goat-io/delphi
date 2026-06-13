@@ -588,6 +588,137 @@ describe('rubrics', () => {
     expect(scores.find(s => s.criterionId === 'no-force-push')?.score).toBe(1)
   })
 
+  it('10. verification-gate: GREEN gate persists EVALUATION leaf (score=1.0, verdict=approve) against Verification Gate Rubric', async () => {
+    await seedRubrics(store, brainId)
+
+    const taskLeaf = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'ACTIVE',
+      title: 'Verification gate GREEN regression target',
+      aliases: [],
+      tags: ['test', 'verification-gate'],
+    })
+
+    const rubricLeaf = await getRubricByTitle(
+      store,
+      brainId,
+      'Verification Gate Rubric',
+    )
+    expect(rubricLeaf).not.toBeNull()
+
+    // Simulate what GateStep does when gate is GREEN
+    const criterionScore = 1.0
+    const evalLeaf = await persistEvaluation(store, brainId, {
+      rubricId: rubricLeaf!.id,
+      targetLeafId: taskLeaf.id,
+      perspective: 'verification-gate',
+      scores: [
+        {
+          criterionId: 'typecheck',
+          score: criterionScore,
+          rationale: 'typecheck passed',
+        },
+        {
+          criterionId: 'lint',
+          score: criterionScore,
+          rationale: 'lint passed',
+        },
+        {
+          criterionId: 'tests',
+          score: criterionScore,
+          rationale: 'tests passed',
+        },
+      ],
+      finalScore: criterionScore,
+      verdict: 'approve',
+      rationale: 'Verification gate GREEN',
+    })
+
+    expect(evalLeaf.kind).toBe('EVALUATION')
+    expect(evalLeaf.title).toContain('verification-gate')
+    const content = evalLeaf.content as Record<string, unknown>
+    expect(content.finalScore).toBeCloseTo(1.0)
+    expect(content.verdict).toBe('approve')
+    expect(content.rubricId).toBe(rubricLeaf!.id)
+    expect(content.targetLeafId).toBe(taskLeaf.id)
+
+    const scores = content.scores as Array<{
+      criterionId: string
+      score: number
+    }>
+    expect(scores).toHaveLength(3)
+    expect(scores.find(s => s.criterionId === 'typecheck')?.score).toBe(1)
+    expect(scores.find(s => s.criterionId === 'lint')?.score).toBe(1)
+    expect(scores.find(s => s.criterionId === 'tests')?.score).toBe(1)
+  })
+
+  it('10b. verification-gate: RED gate persists EVALUATION leaf (score=0.0, verdict=reject) against Verification Gate Rubric', async () => {
+    await seedRubrics(store, brainId)
+
+    const taskLeaf = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'ACTIVE',
+      title: 'Verification gate RED regression target',
+      aliases: [],
+      tags: ['test', 'verification-gate'],
+    })
+
+    const rubricLeaf = await getRubricByTitle(
+      store,
+      brainId,
+      'Verification Gate Rubric',
+    )
+    expect(rubricLeaf).not.toBeNull()
+
+    // Simulate what GateStep does when gate is RED
+    const criterionScore = 0.0
+    const gateOutput = 'TypeError: Cannot read properties of undefined'
+    const evalLeaf = await persistEvaluation(store, brainId, {
+      rubricId: rubricLeaf!.id,
+      targetLeafId: taskLeaf.id,
+      perspective: 'verification-gate',
+      scores: [
+        {
+          criterionId: 'typecheck',
+          score: criterionScore,
+          rationale: 'gate failed',
+        },
+        {
+          criterionId: 'lint',
+          score: criterionScore,
+          rationale: 'gate failed',
+        },
+        {
+          criterionId: 'tests',
+          score: criterionScore,
+          rationale: 'gate failed',
+        },
+      ],
+      finalScore: criterionScore,
+      verdict: 'reject',
+      rationale: `Verification gate RED: ${gateOutput.slice(0, 200)}`,
+    })
+
+    expect(evalLeaf.kind).toBe('EVALUATION')
+    expect(evalLeaf.title).toContain('verification-gate')
+    const content = evalLeaf.content as Record<string, unknown>
+    expect(content.finalScore).toBeCloseTo(0.0)
+    expect(content.verdict).toBe('reject')
+    expect(content.rubricId).toBe(rubricLeaf!.id)
+    expect(content.targetLeafId).toBe(taskLeaf.id)
+
+    const scores = content.scores as Array<{
+      criterionId: string
+      score: number
+    }>
+    expect(scores).toHaveLength(3)
+    expect(scores.find(s => s.criterionId === 'typecheck')?.score).toBe(0)
+    expect(scores.find(s => s.criterionId === 'lint')?.score).toBe(0)
+    expect(scores.find(s => s.criterionId === 'tests')?.score).toBe(0)
+  })
+
   it('9c. Origin Push Rubric: EVALUATION leaf persisted on push failure (reject verdict)', async () => {
     await seedRubrics(store, brainId)
 
