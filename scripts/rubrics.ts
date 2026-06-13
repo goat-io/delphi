@@ -207,6 +207,35 @@ const STANDING_RUBRICS: Array<{ title: string; content: RubricContent }> = [
       derivedFrom: ['Run6 incident: DISPUTED cycle left log uncommitted'],
     },
   },
+  {
+    title: 'Task Closure Rubric',
+    content: {
+      criteria: [
+        {
+          id: 'files-committed',
+          name: 'Files committed',
+          description:
+            'At least one file change was committed as part of this cycle',
+          weight: 0.5,
+          scoringRange: { min: 0, max: 1 },
+        },
+        {
+          id: 'work-complete',
+          name: 'WORK COMPLETE present',
+          description:
+            'Agent produced a WORK COMPLETE summary line confirming task done',
+          weight: 0.5,
+          scoringRange: { min: 0, max: 1 },
+        },
+      ],
+      scoringMethod: 'PASS_FAIL',
+      qualityGate: 1.0,
+      rejectGate: 0.5,
+      derivedFrom: [
+        'DISPUTED_TASK: log:2026-06-12T19:47:58.290Z — verify-closure must read RUBRIC + persist EVALUATION',
+      ],
+    },
+  },
 ]
 
 // ── seedRubrics ───────────────────────────────────────────────────────────────

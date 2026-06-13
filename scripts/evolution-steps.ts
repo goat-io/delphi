@@ -888,7 +888,8 @@ export class VerifyClosureStep extends FunctionStep<
         ).some(f => f.startsWith('rfcs/RFC-') && f.endsWith('.md'))
       }
 
-      // QUEUED_TASK closure: any committed file changes + hasWorkComplete → done
+      // QUEUED_TASK closure: any committed file changes + hasWorkComplete → done.
+      // Reads from "Task Closure Rubric" and persists EVALUATION leaves.
       let queuedTaskDone = false
       if (state.trigger === 'QUEUED_TASK') {
         const added = gitAddedFiles(
@@ -896,7 +897,52 @@ export class VerifyClosureStep extends FunctionStep<
           state.preCommitHash!,
           state.commitHash!,
         )
-        queuedTaskDone = added.length > 0 && (state.hasWorkComplete ?? false)
+        const filesCommitted = added.length > 0
+        const workComplete = state.hasWorkComplete ?? false
+        queuedTaskDone = filesCommitted && workComplete
+
+        // Best-effort: read rubric + persist evaluation (don't block closure on failure)
+        try {
+          const rubricLeaf = await getRubricByTitle(
+            store,
+            brainId,
+            'Task Closure Rubric',
+          )
+          if (rubricLeaf && state.taskId) {
+            const criterionScores = [
+              {
+                criterionId: 'files-committed',
+                score: filesCommitted ? 1 : 0,
+                rationale: filesCommitted
+                  ? `${added.length} file(s) committed`
+                  : 'No files committed in this cycle',
+              },
+              {
+                criterionId: 'work-complete',
+                score: workComplete ? 1 : 0,
+                rationale: workComplete
+                  ? 'WORK COMPLETE marker present in agent output'
+                  : 'WORK COMPLETE marker absent from agent output',
+              },
+            ]
+            const finalScore =
+              criterionScores.reduce((s, c) => s + c.score, 0) /
+              criterionScores.length
+            await persistEvaluation(store, brainId, {
+              rubricId: rubricLeaf.id,
+              targetLeafId: state.taskId,
+              perspective: 'task-closure',
+              scores: criterionScores,
+              finalScore,
+              verdict: queuedTaskDone ? 'approve' : 'reject',
+              rationale: queuedTaskDone
+                ? 'Closure criteria met: files committed and WORK COMPLETE present'
+                : `Closure criteria not met: files=${filesCommitted} workComplete=${workComplete}`,
+            })
+          }
+        } catch {
+          // non-fatal: evaluation persistence failure must not block cycle closure
+        }
       }
 
       const closureMet =
