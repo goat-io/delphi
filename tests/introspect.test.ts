@@ -196,6 +196,66 @@ describe('introspect harness', () => {
     await store2.db.close()
   })
 
+  it('6. UNVERIFIED_CLOSURE: task with unverified=true → anomaly detected + defect task emitted; re-run → deduped', async () => {
+    const unverifiedTask = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'ACTIVE',
+      title: '[SPEC_GAP] Candidate primitive coverage',
+      aliases: [],
+      tags: [],
+      content: { unverified: true },
+    })
+
+    const anomalies = await scanLoopAnomalies(store, brainId)
+    const match = anomalies.find(
+      a =>
+        a.kind === 'UNVERIFIED_CLOSURE' &&
+        a.signature === `unverified:${unverifiedTask.id}`,
+    )
+    expect(match).toBeDefined()
+    expect(match?.evidence).toBe(`brain:leaf:${unverifiedTask.id}`)
+
+    // First emission
+    const emit1 = await emitDefectTasks(store, brainId, anomalies)
+    expect(emit1.created).toBeGreaterThanOrEqual(1)
+
+    // Second emission — exact-match dedup (content.target === anomaly.signature)
+    const anomalies2 = await scanLoopAnomalies(store, brainId)
+    const emit2 = await emitDefectTasks(store, brainId, anomalies2)
+    expect(emit2.created).toBe(0)
+    expect(emit2.deduped).toBeGreaterThanOrEqual(1)
+
+    // Clean up
+    await store.updateLeaf(unverifiedTask.id, {
+      status: 'ARCHIVED',
+      content: {},
+    })
+  })
+
+  it('6b. UNVERIFIED_CLOSURE regression: auto-detected tasks with unverified=true do NOT recurse', async () => {
+    const autoDetectedUnverified = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'ACTIVE',
+      title: '[loop-defect] UNVERIFIED_CLOSURE: some prior defect',
+      aliases: [],
+      tags: ['auto-detected', 'loop-defect'],
+      content: { unverified: true },
+    })
+
+    const anomalies = await scanLoopAnomalies(store, brainId)
+    const selfRef = anomalies.find(
+      a =>
+        a.kind === 'UNVERIFIED_CLOSURE' &&
+        a.signature === `unverified:${autoDetectedUnverified.id}`,
+    )
+    // auto-detected tasks must NOT appear as UNVERIFIED_CLOSURE sources
+    expect(selfRef).toBeUndefined()
+
+    await store.updateLeaf(autoDetectedUnverified.id, { status: 'ARCHIVED' })
+  })
+
   it('5. No circular loopAnomalies goal — anomaly count is a health metric, not a competing goal', async () => {
     // The "No unattended loop anomalies" goal was removed: it was circular
     // (satisfied only by closing maintenance tasks that ranked below it, so it

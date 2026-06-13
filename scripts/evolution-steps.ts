@@ -1036,12 +1036,19 @@ export class VerifyClosureStep extends FunctionStep<
       }
 
       let rfcAdded = false
+      let specResearchAdded = false
       if (state.trigger === 'SPEC_GAP') {
-        rfcAdded = gitAddedFiles(
+        const specGapFiles = gitAddedFiles(
           cwd,
           state.preCommitHash!,
           state.commitHash!,
-        ).some(f => f.startsWith('rfcs/RFC-') && f.endsWith('.md'))
+        )
+        rfcAdded = specGapFiles.some(
+          f => f.startsWith('rfcs/RFC-') && f.endsWith('.md'),
+        )
+        // A research/ file documenting why a gap is already covered is also
+        // a valid SPEC_GAP closure (e.g. "this primitive is in RFC-0027 §X").
+        specResearchAdded = specGapFiles.some(f => f.startsWith('research/'))
       }
 
       // QUEUED_TASK closure: any committed file changes + hasWorkComplete → done.
@@ -1102,7 +1109,11 @@ export class VerifyClosureStep extends FunctionStep<
       }
 
       const closureMet =
-        !stillPresent || researchAdded || rfcAdded || queuedTaskDone
+        !stillPresent ||
+        researchAdded ||
+        rfcAdded ||
+        queuedTaskDone ||
+        specResearchAdded
 
       // For non-QUEUED_TASK triggers (SPEC_GAP, OPEN_QUESTION, etc.) persist a closure
       // EVALUATION leaf so every closure outcome is rubric-backed (best-effort).
@@ -1115,7 +1126,8 @@ export class VerifyClosureStep extends FunctionStep<
             'Task Closure Rubric',
           )
           if (closureRubric && state.taskId) {
-            const artifactPresent = rfcAdded || researchAdded || !stillPresent
+            const artifactPresent =
+              rfcAdded || researchAdded || specResearchAdded || !stillPresent
             const workOk = state.hasWorkComplete ?? false
             const closureScores = [
               {
