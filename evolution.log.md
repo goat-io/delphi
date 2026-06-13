@@ -125,3 +125,15 @@ Automatically maintained by `pnpm evolve:loop`.
 <!-- daemon 2026-06-12T20:35:34.889Z daemon starting interval=999min maxPerDay=12 -->
 <!-- daemon 2026-06-13T13:15:33.672Z daemon starting interval=1min maxPerDay=8 -->
 <!-- daemon 2026-06-13T14:09:00.192Z daemon starting interval=1min maxPerDay=10 executor=headless -->
+## Cycle 1 — 2026-06-13T14:16:33.962Z
+
+| Field | Value |
+|-------|-------|
+| Task | leaf_8e8e31317e39404882376436 — Fix: cycle work must commit-or-rollback atomically per cycle |
+| Trigger | QUEUED_TASK |
+| Agent summary | WORK COMPLETE: Fix LogStep to atomically commit evolution.log.md in every cycle (DISPUTED or GREEN), preventing cross-cycle log diff contamination; add Cycle Atomicity Rubric and regression tests. | guard=allow requiresReview=true | review=approved score=1.00 [Weighted approval 1.00 ≥ 0.7.] |
+| Gate | GREEN |
+| Commit | 5cc2937 |
+| Closure | CLOSED |
+| Health before | leaves=1176 beliefs=682 evidence=2264 openQ=99 |
+| Health after | leaves=1187 beliefs=685 evidence=2352 openQ=99 |
