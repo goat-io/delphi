@@ -358,3 +358,15 @@ Automatically maintained by `pnpm evolve:loop`.
 | Health before | leaves=1259 beliefs=687 evidence=2354 openQ=99 |
 | Health after | leaves=1259 beliefs=687 evidence=2354 openQ=99 |
 <!-- daemon 2026-06-13T17:25:23.147Z daemon starting interval=1min maxPerDay=12 executor=headless -->
+## Cycle 1 — 2026-06-13T17:34:12.490Z
+
+| Field | Value |
+|-------|-------|
+| Task | leaf_1240426ff38947d189c8a882 — Neutralize arbiter-rejected SPEC_GAP sources so they stop re-dispatching |
+| Trigger | QUEUED_TASK |
+| Agent summary | WORK COMPLETE: neutralize arbiter-rejected SPEC_GAP source leaves with `specGapResolved=true`, persist DECISION+EVALUATION on rejection, skip resolved leaves in scanDebt, regression test added | guard=allow requiresReview=true | review=approved score=1.00 [Weighted approval 1.00 ≥ 0.7.] |
+| Gate | GREEN |
+| Commit | 32873cf |
+| Closure | CLOSED |
+| Health before | leaves=1263 beliefs=687 evidence=2354 openQ=99 |
+| Health after | leaves=1270 beliefs=687 evidence=2354 openQ=99 |
