@@ -54,6 +54,12 @@ export async function scanLoopAnomalies(
     if (leaf.kind !== 'TASK') {
       continue
     }
+    // Do NOT introspect our own introspection tasks. A disputed/unverified
+    // auto-detected meta-task must not spawn a fresh anomaly about itself —
+    // that is the self-perpetuating regress that starves forward work.
+    if ((leaf.tags ?? []).includes('auto-detected')) {
+      continue
+    }
     if (leaf.status === 'DISPUTED') {
       const c = (leaf.content ?? {}) as Record<string, unknown>
       const blocked = typeof c.blocked === 'string' ? c.blocked : ''
@@ -72,6 +78,9 @@ export async function scanLoopAnomalies(
   // ── 2. Brain: TASK leaves with content.unverified === true ──────────────────
   for (const leaf of allLeaves) {
     if (leaf.kind !== 'TASK') {
+      continue
+    }
+    if ((leaf.tags ?? []).includes('auto-detected')) {
       continue
     }
     const c = (leaf.content ?? {}) as Record<string, unknown>
@@ -306,7 +315,12 @@ export async function emitDefectTasks(
         trigger: 'HUMAN_REQUEST',
         queued: true,
         target: anomaly.signature,
-        priority: 92,
+        // Maintenance ranks BELOW goal-directed forward work (GOAL_GAP=90,
+        // substantive rubric tasks=95) so the loop advances the goals it was
+        // given first, and self-maintains only when there's nothing better to
+        // build. Above SPEC_GAP(30)/OPEN_QUESTION(20) — real defects still
+        // outrank exploratory work.
+        priority: 45,
         origin: 'introspection',
         anomalyKind: anomaly.kind,
         evidence: anomaly.evidence,
