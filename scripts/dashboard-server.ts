@@ -566,15 +566,173 @@ async function readGraph(limit: number): Promise<{
   return { nodes, edges }
 }
 
+// ── direction: are we moving toward the vision, and how freely? ────────────
+// Not a KPI to optimize — a pulse to read. Freedom = how many distinct
+// interpretations of "evolve" are in play; alignment = does the work trace to
+// the manifesto; health = converging vs thrashing, understanding growing,
+// uncertainty shrinking. (Heuristic lineage until goals are manifesto-derived.)
+
+// Each trigger is an interpretation of "what advancing the vision means here".
+const LINEAGE: Record<string, string> = {
+  COVERAGE_GAP:
+    'Deepen evidence-backed understanding — the substrate the manifesto is built on',
+  OPEN_QUESTION: 'Reduce uncertainty — evolution answers what was unknown',
+  SPEC_GAP: 'Keep the spec coherent so understanding stays navigable',
+  GOAL_GAP: 'Advance a declared goal toward the vision',
+  EMPTY_REGION: 'Map a blank area so understanding is complete',
+  QUEUED_TASK: 'Carry out planned work toward the vision',
+  FRONTEND_GAP:
+    'Make the evolution legible so humans can evaluate it (manifesto step 5)',
+}
+
+function parseHealth(s: string | null): {
+  leaves: number
+  beliefs: number
+  evidence: number
+  openQ: number
+} {
+  const out = { leaves: 0, beliefs: 0, evidence: 0, openQ: 0 }
+  if (!s) {
+    return out
+  }
+  for (const m of s.matchAll(/(\w+)=(\d+)/g)) {
+    const k = m[1]
+    const v = Number(m[2])
+    if (k === 'leaves') {
+      out.leaves = v
+    } else if (k === 'beliefs') {
+      out.beliefs = v
+    } else if (k === 'evidence') {
+      out.evidence = v
+    } else if (k === 'openQ') {
+      out.openQ = v
+    }
+  }
+  return out
+}
+
+function computeDirection(cycles: CycleRecord[]) {
+  const WINDOW = 15
+  const window = cycles.slice(0, WINDOW) // newest first
+  const chron = [...window].reverse()
+  const n = chron.length
+
+  if (n < 3) {
+    return {
+      verdict: 'starting',
+      summary: 'Too early to read direction — the loop is just getting going.',
+      vitals: null,
+      bets: [],
+    }
+  }
+
+  const first = parseHealth(
+    chron[0]?.healthBefore ?? chron[0]?.healthAfter ?? null,
+  )
+  const last = parseHealth(chron[n - 1]?.healthAfter ?? null)
+  const understandingDelta =
+    last.beliefs + last.evidence - (first.beliefs + first.evidence)
+  const questionsNetResolved = first.openQ - last.openQ // + = resolving backlog
+
+  const closed = window.filter(
+    c =>
+      (c.closure ?? '').toUpperCase() === 'CLOSED' &&
+      (c.gate ?? '').toUpperCase().startsWith('GREEN'),
+  ).length
+  const convergence = window.length > 0 ? closed / window.length : 0
+
+  // region lives inside the task string, e.g. "leaf_… — [COVERAGE_GAP] Spec"
+  const regionOfCycle = (c: CycleRecord): string | null => {
+    const m = /\[[A-Z_]+\]\s*(.+)$/.exec(c.task ?? '')
+    return m ? (m[1] ?? '').trim() : null
+  }
+  const regions = new Set(window.map(regionOfCycle).filter(Boolean))
+  const triggers = [
+    ...new Set(window.map(c => c.trigger).filter(Boolean)),
+  ] as string[]
+
+  // current bets: the distinct interpretations in recent play, with lineage
+  const betKeys = new Map<string, { trigger: string; region: string | null }>()
+  for (const c of window) {
+    if (!c.trigger) {
+      continue
+    }
+    const key = `${c.trigger}`
+    if (!betKeys.has(key)) {
+      betKeys.set(key, { trigger: c.trigger, region: regionOfCycle(c) })
+    }
+  }
+  const bets = [...betKeys.values()].map(b => ({
+    interpretation: b.trigger,
+    lineage: LINEAGE[b.trigger] ?? null,
+    aligned: b.trigger in LINEAGE,
+  }))
+
+  let verdict: string
+  if (convergence < 0.5) {
+    verdict = 'thrashing'
+  } else if (understandingDelta > 0) {
+    verdict = 'advancing'
+  } else {
+    verdict = 'drifting'
+  }
+
+  const narrow = triggers.length <= 1
+  const anyUnaligned = bets.some(b => !b.aligned)
+
+  let summary: string
+  if (verdict === 'thrashing') {
+    summary = `Work is churning — only ${Math.round(convergence * 100)}% of recent cycles closed cleanly. Convergence before new direction.`
+  } else if (verdict === 'advancing') {
+    summary =
+      `Advancing toward the vision: understanding grew (+${understandingDelta} beliefs+evidence) and every active interpretation traces to the manifesto. ` +
+      (narrow
+        ? 'But exploration is narrow — only one interpretation of "evolve" is in play.'
+        : `Exploring ${triggers.length} interpretations in parallel.`)
+  } else {
+    summary =
+      'Drifting — understanding is not growing. Worth re-checking what the agents are pursuing.'
+  }
+  if (anyUnaligned) {
+    summary += ' Some work does not yet trace to the manifesto.'
+  }
+
+  return {
+    verdict,
+    summary,
+    vitals: {
+      understanding: {
+        delta: understandingDelta,
+        trend:
+          understandingDelta > 0
+            ? 'up'
+            : understandingDelta < 0
+              ? 'down'
+              : 'flat',
+      },
+      questions: { netResolved: questionsNetResolved },
+      convergence: {
+        pct: Math.round(convergence * 100),
+        closed,
+        total: window.length,
+      },
+      diversity: { areas: regions.size, interpretations: triggers.length },
+    },
+    bets,
+  }
+}
+
 function snapshot() {
   const alive = daemonAlive()
+  const cycles = parseCycles()
   return {
     generatedAt: new Date().toISOString(),
     state: readState(),
-    cycles: parseCycles(),
+    cycles,
     live: parseLive(alive),
     agents: readAgents(),
     workingFiles: workingFiles(),
+    direction: computeDirection(cycles),
   }
 }
 

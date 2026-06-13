@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import Header from './components/Header.jsx'
+import { Direction } from './components/Direction.jsx'
 import { Missions } from './components/Missions.jsx'
 import EvolutionLoop from './components/EvolutionLoop.jsx'
 import BrainGrowth from './components/BrainGrowth.jsx'
@@ -88,15 +89,18 @@ export default function App() {
 
   return (
     <div style={{ minHeight: '100vh', background: '#0b0e14' }}>
-      <Header live={live} />
+      <Header live={live} generatedAt={snapshot?.generatedAt} sseOk={sseOk} />
 
       <main style={{
         maxWidth: isMobile ? '100%' : '1400px',
         margin: '0 auto',
         overflowX: 'hidden',
       }}>
-        {/* The whole story: what we're achieving + the parallel missions. */}
-        <Missions state={state} agents={agents} live={live} />
+        {/* Are we moving toward the vision, and how freely? (the alignment read) */}
+        <Direction direction={snapshot?.direction} isMobile={isMobile} />
+
+        {/* What we're achieving + the parallel missions by area. */}
+        <Missions state={state} agents={agents} live={live} cycles={cycles} />
 
         {/* Everything below is the machinery — hidden by default. */}
         <div style={{ padding: isMobile ? '14px 16px' : '16px 28px' }}>
@@ -140,12 +144,18 @@ export default function App() {
         gap: '4px',
       }}>
         <span style={{ color: '#3d4559', fontSize: '11px', fontFamily: 'ui-monospace, monospace' }}>
-          Delphi Evolution Dashboard
+          Delphi — continuously evolving
         </span>
         <span style={{ color: '#3d4559', fontSize: '11px' }}>
           {snapshot?.generatedAt
-            ? `snapshot ${new Date(snapshot.generatedAt).toLocaleTimeString()}`
-            : sseOk ? 'connected via SSE' : 'polling /api/snapshot'
+            ? (() => {
+                const ageMs = Date.now() - new Date(snapshot.generatedAt).getTime()
+                const ageMins = Math.floor(ageMs / 60000)
+                if (ageMins < 1) return 'data: just now'
+                if (ageMins < 60) return `data: ${ageMins}m ago`
+                return `data: ${Math.floor(ageMins / 60)}h ago`
+              })()
+            : 'waiting for first data…'
           }
         </span>
       </footer>
