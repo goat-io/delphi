@@ -419,6 +419,60 @@ describe('evolve harness', () => {
     expect(prompt).toContain('persistEvaluation')
   })
 
+  it('8. QUEUED_TASK stale-dispatch reclaim: old dispatchedAt + ACTIVE → resurfaces; recent dispatchedAt → does not', async () => {
+    const opsRegion = await store.getRegionByTitle(brainId, 'Operations')
+    const opsRegionId = opsRegion?.id
+
+    // Task with STALE dispatchedAt (2 hours ago) and no closing DECISION → must resurface
+    const oldDispatchedAt = new Date(
+      Date.now() - 2 * 60 * 60 * 1000,
+    ).toISOString()
+    const staleTask = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'ACTIVE',
+      title: 'Stale-dispatched task that lost its cycle',
+      statement: 'This task was dispatched but the cycle OOMed.',
+      aliases: [],
+      tags: [],
+      regionId: opsRegionId,
+      content: {
+        trigger: 'HUMAN_REQUEST',
+        priority: 70,
+        closureCriteria: 'implementation done and tests pass',
+        dispatchedAt: oldDispatchedAt,
+      },
+    })
+
+    // Task with RECENT dispatchedAt (5 seconds ago) → must NOT resurface
+    const recentDispatchedAt = new Date(Date.now() - 5000).toISOString()
+    const freshTask = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'ACTIVE',
+      title: 'Recently-dispatched task still in flight',
+      statement: 'This task was dispatched moments ago.',
+      aliases: [],
+      tags: [],
+      regionId: opsRegionId,
+      content: {
+        trigger: 'HUMAN_REQUEST',
+        priority: 70,
+        closureCriteria: 'implementation done and tests pass',
+        dispatchedAt: recentDispatchedAt,
+      },
+    })
+
+    const debt = await scanDebt(store, brainId)
+    const queuedItems = debt.filter(d => d.trigger === 'QUEUED_TASK')
+    const ids = queuedItems.map(d => d.target)
+
+    // Stale task must resurface
+    expect(ids).toContain(staleTask.id)
+    // Recent task must NOT resurface
+    expect(ids).not.toContain(freshTask.id)
+  })
+
   it('7. buildWorkPrompt: EMPTY_REGION contains closure criteria and WORK COMPLETE rule; SPEC_GAP contains RFC-9999', async () => {
     const emptyItem: DebtItem = {
       trigger: 'EMPTY_REGION',

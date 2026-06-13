@@ -54,9 +54,10 @@ export interface BootstrapResult {
 export async function bootstrapBrain(opts: {
   dataDir: string
   repoRoot: string
+  brainDir?: string
   quiet?: boolean
 }): Promise<BootstrapResult> {
-  const { dataDir, repoRoot, quiet = false } = opts
+  const { dataDir, repoRoot, brainDir, quiet = false } = opts
   const log = quiet ? (_: string) => {} : (msg: string) => console.log(msg)
 
   // 1. Create DB, migrate, store
@@ -82,7 +83,7 @@ export async function bootstrapBrain(opts: {
   const importCounts = await importBrain(
     store,
     brainId,
-    resolve(repoRoot, 'brain'),
+    brainDir ?? resolve(repoRoot, 'brain'),
   )
   log(
     `[bootstrap] Imported: leaves=${importCounts.leaves} rels=${importCounts.relationships} evidence=${importCounts.evidence} assets=${importCounts.assets} events=${importCounts.events}`,
@@ -298,7 +299,7 @@ export async function bootstrapBrain(opts: {
   const exportCounts = await exportBrain(
     store,
     brainId,
-    resolve(repoRoot, 'brain'),
+    brainDir ?? resolve(repoRoot, 'brain'),
   )
   log(
     `[bootstrap] Exported: leaves=${exportCounts.leaves} rels=${exportCounts.relationships} evidence=${exportCounts.evidence} assets=${exportCounts.assets} events=${exportCounts.events}`,

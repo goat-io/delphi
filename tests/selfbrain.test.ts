@@ -17,6 +17,7 @@ beforeAll(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'delphi-selfbrain-'))
   const result = await bootstrapBrain({
     dataDir: join(tmpDir, 'brain'),
+    brainDir: join(tmpDir, 'brain-export'),
     repoRoot: REPO_ROOT,
     quiet: true,
   })
@@ -102,6 +103,7 @@ describe('selfbrain bootstrap', () => {
     // Second run
     const result2 = await bootstrapBrain({
       dataDir: join(tmpDir, 'brain'),
+      brainDir: join(tmpDir, 'brain-export'),
       repoRoot: REPO_ROOT,
       quiet: true,
     })

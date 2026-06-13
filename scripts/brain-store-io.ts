@@ -1,7 +1,7 @@
 // pnpm tsx scripts/brain-store-io.ts
 
-import { existsSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { createWriteStream, existsSync } from 'node:fs'
+import { mkdir, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import type { BrainStore } from '@goatlab/delphi-knowledge'
 import type {
@@ -52,16 +52,24 @@ function sortById<T extends { id: string }>(arr: T[]): T[] {
 }
 
 /**
- * Write an array of records as deterministic JSONL (sorted by id, sorted keys, LF endings, trailing newline).
+ * Write an array of records as deterministic JSONL using a streaming write.
+ * Writes one line per record (sorted by id, sorted keys, LF endings, trailing newline).
+ * Does NOT build a giant in-memory string — bounds peak memory for large brains.
  */
-async function writeJsonl<T extends { id: string }>(
+async function writeJsonlStreaming<T extends { id: string }>(
   filePath: string,
   records: T[],
 ): Promise<void> {
   const sorted = sortById(records)
-  const lines = sorted.map(r => sortedJson(r))
-  const content = lines.length > 0 ? `${lines.join('\n')}\n` : ''
-  await writeFile(filePath, content, { encoding: 'utf8' })
+  return new Promise<void>((resolveP, rejectP) => {
+    const stream = createWriteStream(filePath, { encoding: 'utf8' })
+    stream.once('error', rejectP)
+    stream.once('finish', resolveP)
+    for (const record of sorted) {
+      stream.write(`${sortedJson(record)}\n`)
+    }
+    stream.end()
+  })
 }
 
 /**
@@ -82,6 +90,10 @@ async function readJsonl<T>(filePath: string): Promise<T[]> {
 /**
  * Export all canonical Brain rows to JSONL files in outDir.
  * Files created: leaves.jsonl, relationships.jsonl, evidence.jsonl, assets.jsonl, events.jsonl
+ *
+ * Each table is fetched and streamed to disk one at a time (sequential, not parallel)
+ * so peak memory is bounded to ~1 table at a time — critical for large brains.
+ * Rows within each file are sorted by id for deterministic output.
  */
 export async function exportBrain(
   store: BrainStore,
@@ -90,29 +102,39 @@ export async function exportBrain(
 ): Promise<BrainIoCounts> {
   await mkdir(outDir, { recursive: true })
 
-  const [leaves, relationships, evidence, assets, events] = await Promise.all([
-    store.listLeaves(brainId),
-    store.listRelationships(brainId),
-    store.listAllEvidence(brainId),
-    store.listAssets(brainId),
-    store.listEvents(brainId),
-  ])
-
-  await Promise.all([
-    writeJsonl(resolve(outDir, 'leaves.jsonl'), leaves),
-    writeJsonl(resolve(outDir, 'relationships.jsonl'), relationships),
-    writeJsonl(resolve(outDir, 'evidence.jsonl'), evidence),
-    writeJsonl(resolve(outDir, 'assets.jsonl'), assets),
-    writeJsonl(resolve(outDir, 'events.jsonl'), events),
-  ])
-
-  return {
-    leaves: leaves.length,
-    relationships: relationships.length,
-    evidence: evidence.length,
-    assets: assets.length,
-    events: events.length,
+  const counts: BrainIoCounts = {
+    leaves: 0,
+    relationships: 0,
+    evidence: 0,
+    assets: 0,
+    events: 0,
   }
+
+  // Process one table at a time to bound peak memory
+  const leaves = await store.listLeaves(brainId)
+  counts.leaves = leaves.length
+  await writeJsonlStreaming(resolve(outDir, 'leaves.jsonl'), leaves)
+
+  const relationships = await store.listRelationships(brainId)
+  counts.relationships = relationships.length
+  await writeJsonlStreaming(
+    resolve(outDir, 'relationships.jsonl'),
+    relationships,
+  )
+
+  const evidence = await store.listAllEvidence(brainId)
+  counts.evidence = evidence.length
+  await writeJsonlStreaming(resolve(outDir, 'evidence.jsonl'), evidence)
+
+  const assets = await store.listAssets(brainId)
+  counts.assets = assets.length
+  await writeJsonlStreaming(resolve(outDir, 'assets.jsonl'), assets)
+
+  const events = await store.listEvents(brainId)
+  counts.events = events.length
+  await writeJsonlStreaming(resolve(outDir, 'events.jsonl'), events)
+
+  return counts
 }
 
 /**

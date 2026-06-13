@@ -236,7 +236,22 @@ export async function scanDebt(
     })
   }
 
-  // QUEUED_TASK: ACTIVE TASK leaves with HUMAN_REQUEST or queued flag, not yet dispatched
+  // QUEUED_TASK: ACTIVE TASK leaves with HUMAN_REQUEST or queued flag, not yet dispatched.
+  // Stale-dispatch reclaim (RFC-0029 lease semantics): if dispatchedAt is older than
+  // RECLAIM_MINUTES (default 30) AND no closing DECISION leaf exists, treat as fresh.
+  const RECLAIM_MINUTES = Number(process.env.RECLAIM_MINUTES ?? '30')
+  const reclaimMs = RECLAIM_MINUTES * 60 * 1000
+
+  // Build set of taskIds that have a closing DECISION leaf
+  const allDecisions = await store.listLeaves(brainId, { kind: 'DECISION' })
+  const closedTaskIds = new Set<string>()
+  for (const d of allDecisions) {
+    const dc = (d.content ?? {}) as Record<string, unknown>
+    if (typeof dc.taskId === 'string') {
+      closedTaskIds.add(dc.taskId)
+    }
+  }
+
   const allTasks = await store.listLeaves(brainId, { kind: 'TASK' })
   for (const taskLeaf of allTasks) {
     if (taskLeaf.status !== 'ACTIVE') {
@@ -247,13 +262,20 @@ export async function scanDebt(
     if (!c.closureCriteria) {
       continue
     }
-    // Must not already have been dispatched
-    if (c.dispatchedAt) {
-      continue
-    }
     // Must be a human-queued task
     if (c.trigger !== 'HUMAN_REQUEST' && c.queued !== true) {
       continue
+    }
+    // If dispatchedAt is set, only reclaim if lease has expired and no DECISION closed it
+    if (c.dispatchedAt) {
+      const dispatchedMs = new Date(c.dispatchedAt as string).getTime()
+      const ageMs = Date.now() - dispatchedMs
+      const isStale = ageMs > reclaimMs
+      const isClosed = closedTaskIds.has(taskLeaf.id)
+      if (!isStale || isClosed) {
+        continue
+      }
+      // Stale dispatch with no closing decision → re-queue (reclaim)
     }
     items.push({
       trigger: 'QUEUED_TASK',

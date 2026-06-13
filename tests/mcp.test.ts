@@ -21,6 +21,7 @@ beforeAll(async () => {
   // Bootstrap the brain (quiet); DB must be closed before spawning MCP server
   await bootstrapBrain({
     dataDir: join(tmpDir, 'brain'),
+    brainDir: join(tmpDir, 'brain-export'),
     repoRoot: REPO_ROOT,
     quiet: true,
   })

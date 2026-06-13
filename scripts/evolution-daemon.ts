@@ -1,35 +1,31 @@
 // pnpm evolve:daemon
 //
-// Continuous autonomous evolution: each tick runs ONE evolution cycle via the
-// same in-process flow as evolve:engine (EvolutionCycleWorkflow), then sleeps
-// EVOLVE_INTERVAL_MIN minutes (default 30).
+// Continuous autonomous evolution: each tick spawns evolution-cycle-once.ts as
+// a SEPARATE CHILD PROCESS via `pnpm evolve:cycle-once`, so each cycle gets its
+// own heap and the OS reclaims all memory on exit. A cycle OOM (SIGKILL/exit 137)
+// kills only the child — the daemon stays alive.
 //
 // Budgets (RFC-0028 spirit):
 //   EVOLVE_MAX_CYCLES_PER_DAY  — default 12; when exhausted sleep until next UTC day.
 //   EVOLVE_INTERVAL_MIN        — default 30; minutes between ticks.
 //
 // Stop conditions:
-//   SIGINT / SIGTERM           — graceful (finish current cycle, then exit).
+//   SIGINT / SIGTERM           — graceful (finish current cycle wait, then exit).
 //   "no actionable debt"       — sleep long interval (4h), then try again.
+//   3 consecutive failures     — daemon logs and exits non-zero (avoids crash loop).
+//
+// Child exit codes (from evolution-cycle-once.ts):
+//   0   — cycle ran ok
+//   2   — no actionable debt
+//   1   — error
+//   137 — OOM / SIGKILL
+//   134 — SIGABRT (assertion / OOM)
 //
 // Each tick outcome + heartbeat is appended to evolution.log.md.
 
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import {
-  CREATE_TABLES_SQL,
-  createEngine,
-  nanoId,
-  runMigrations,
-} from '@goatlab/delphi-core'
-import { parseArgs } from './evolution-loop.js'
-import {
-  EvolutionCycleWorkflow,
-  readState,
-  startWorker,
-} from './evolution-steps.js'
-import { createEngineDb, execMultiStatement } from './pglite-db-client.js'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -38,6 +34,10 @@ const MAX_CYCLES_PER_DAY = Number(process.env.EVOLVE_MAX_CYCLES_PER_DAY ?? '12')
 const LONG_SLEEP_MIN = 4 * 60 // 4 hours when no actionable debt
 const INTERVAL_MS = INTERVAL_MIN * 60 * 1000
 const LONG_SLEEP_MS = LONG_SLEEP_MIN * 60 * 1000
+const MAX_CONSECUTIVE_FAILURES = 3
+
+// Child heap cap: 6 GB so OOM kills the child (not daemon) on large brains
+const CHILD_NODE_OPTIONS = '--max-old-space-size=6144'
 
 // ── Heartbeat / log helpers ───────────────────────────────────────────────────
 
@@ -46,7 +46,7 @@ function appendDaemonLog(cwd: string, line: string): void {
   if (!existsSync(logPath)) {
     writeFileSync(
       logPath,
-      '# Evolution Log\n\nAutomatically maintained by `pnpm evolve:loop`.\n\n',
+      '# Evolution Log\n\nAutomatically maintained by `pnpm evolve:daemon`.\n\n',
     )
   }
   const ts = new Date().toISOString()
@@ -97,147 +97,68 @@ async function sleep(ms: number): Promise<void> {
   })
 }
 
-// ── Run one cycle via the engine ──────────────────────────────────────────────
+// ── Run one cycle as a child process ─────────────────────────────────────────
 
-async function runOneCycle(opts: {
-  cwd: string
-  executor: 'pty' | 'headless'
-  cycleNumber: number
-  engineDataDir: string
-}): Promise<'NO_DEBT' | 'COMPLETED' | 'FAILED'> {
-  const { cwd, executor, cycleNumber, engineDataDir } = opts
+type CycleOutcome = 'COMPLETED' | 'NO_DEBT' | 'FAILED'
+
+function runOneCycle(opts: { cwd: string; cycleNumber: number }): CycleOutcome {
+  const { cwd, cycleNumber } = opts
 
   console.log(`\n[daemon] ── Tick ${cycleNumber} ─────────────────────────────`)
+  console.log(`[daemon] spawning evolution-cycle-once (child process)`)
 
-  mkdirSync(engineDataDir, { recursive: true })
-  const { db, close: closeEngineDb } = await createEngineDb(engineDataDir)
-
-  await execMultiStatement(db, CREATE_TABLES_SQL)
-  await runMigrations(db)
-
-  const engine = createEngine({
-    database: db,
-    workflows: [new EvolutionCycleWorkflow()] as const,
-    tenantId: 'default',
-    disableStepStatusBuffering: true,
-    dispatch: {
-      pollingIntervalMs: 200,
-      maxPollingIntervalMs: 2_000,
+  const result = spawnSync('pnpm', ['evolve:cycle-once'], {
+    cwd,
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      NODE_OPTIONS: CHILD_NODE_OPTIONS,
     },
   })
 
-  const stopWorker = await startWorker(engine)
+  const exitCode = result.status ?? 1
 
-  let outcome: 'NO_DEBT' | 'COMPLETED' | 'FAILED' = 'FAILED'
-
-  try {
-    const runId = nanoId()
-    process.env.AGENT_EXECUTOR = executor
-
-    const { runId: engineRunId } = await engine['evolution-cycle'].start({
-      cycle: cycleNumber,
-      executor,
-      runId,
-    })
-
-    console.log(`[daemon] engine run started: ${engineRunId}`)
-
-    const timeoutMs = 35 * 60 * 1000
-    const startMs = Date.now()
-    let finalStatus: any = null
-
-    while (Date.now() - startMs < timeoutMs) {
-      if (shuttingDown) {
-        break
-      }
-      await new Promise(r => setTimeout(r, 1000))
-      const status = (await engine['evolution-cycle'].getStatus(
-        engineRunId,
-      )) as any
-      if (
-        ['COMPLETED', 'FAILED', 'CANCELLED'].includes(status.status as string)
-      ) {
-        finalStatus = status
-        break
-      }
-      const running = ((status.steps as any[]) ?? []).filter(
-        s => s.status === 'RUNNING',
-      )
-      if (running.length > 0) {
-        process.stdout.write(
-          `\r[daemon] running: ${running.map((s: any) => s.stepName).join(', ')}    `,
-        )
-      }
-    }
-    process.stdout.write('\n')
-
-    if (!finalStatus) {
-      console.error(`[daemon] run ${engineRunId} timed out`)
-      outcome = 'FAILED'
-    } else {
-      const finalState = readState(cwd, runId)
-      const engineStatus = finalStatus.status as string
-
-      if (engineStatus === 'FAILED') {
-        // Check if it's a NO_DEBT error
-        const steps = ((finalStatus.steps as any[]) ?? []) as any[]
-        const scanStep = steps.find((s: any) => s.stepName === 'scan')
-        if (scanStep?.error?.includes('NO_DEBT')) {
-          outcome = 'NO_DEBT'
-        } else {
-          outcome = 'FAILED'
-        }
-      } else {
-        outcome = 'COMPLETED'
-      }
-
-      const gate = finalState.gateGreenResult
-        ? 'GREEN'
-        : finalState.disputed
-          ? 'DISPUTED'
-          : 'UNKNOWN'
-      const closure = finalState.closureStatus ?? 'UNKNOWN'
-      const trigger = finalState.trigger ?? 'unknown'
-      appendDaemonLog(
-        cwd,
-        `tick=${cycleNumber} engine=${engineStatus} gate=${gate} closure=${closure} trigger=${trigger} outcome=${outcome}`,
-      )
-    }
-  } catch (err) {
-    const msg = (err as Error).message ?? String(err)
-    console.error(`[daemon] cycle error: ${msg}`)
-    appendDaemonLog(cwd, `tick=${cycleNumber} ERROR: ${msg}`)
-    outcome = 'FAILED'
-  } finally {
-    await stopWorker().catch(() => {})
-    await engine.shutdown().catch(() => {})
-    await engine.ingestBuffer.shutdown().catch(() => {})
-    await closeEngineDb().catch(() => {})
+  if (result.error) {
+    console.error(`[daemon] spawn error: ${result.error.message}`)
+    return 'FAILED'
   }
 
-  return outcome
+  if (exitCode === 0) {
+    return 'COMPLETED'
+  }
+
+  if (exitCode === 2) {
+    return 'NO_DEBT'
+  }
+
+  // 1 = generic error, 137 = SIGKILL/OOM, 134 = SIGABRT
+  console.error(
+    `[daemon] child exited with code ${exitCode} (OOM/error) on tick ${cycleNumber}`,
+  )
+  return 'FAILED'
 }
 
 // ── Main daemon loop ──────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2))
   const cwd = process.cwd()
-  const engineDataDir = resolve(cwd, '.delphi/engine')
-  const executor = args.executor
 
-  // Verify claude CLI
-  const versionCheck = spawnSync('claude', ['--version'], { encoding: 'utf8' })
+  // Verify pnpm / evolve:cycle-once script exists (early failure)
+  const versionCheck = spawnSync('pnpm', ['--version'], { encoding: 'utf8' })
   if (versionCheck.error || versionCheck.status !== 0) {
-    console.error('[daemon] ERROR: `claude` CLI not found.')
+    console.error('[daemon] ERROR: `pnpm` not found.')
     process.exit(1)
   }
+
+  // Read executor from env (passed through to child via process.env)
+  const executor =
+    (process.env.AGENT_EXECUTOR as string | undefined) ?? 'headless'
 
   console.log(
     `\n╔══ Delphi Evolution Daemon ══════════════════════════════════╗`,
   )
   console.log(
-    `║  interval=${INTERVAL_MIN}min  maxPerDay=${MAX_CYCLES_PER_DAY}  executor=${executor}`,
+    `║  interval=${INTERVAL_MIN}min  maxPerDay=${MAX_CYCLES_PER_DAY}  executor=${executor}  childHeap=6GB`,
   )
   console.log(
     `╚═════════════════════════════════════════════════════════════╝\n`,
@@ -245,13 +166,14 @@ async function main(): Promise<void> {
 
   appendDaemonLog(
     cwd,
-    `daemon starting interval=${INTERVAL_MIN}min maxPerDay=${MAX_CYCLES_PER_DAY}`,
+    `daemon starting interval=${INTERVAL_MIN}min maxPerDay=${MAX_CYCLES_PER_DAY} executor=${executor}`,
   )
 
   // Per-day budget tracking
   let currentDay = todayUtc()
   let cyclesThisDay = 0
   let globalCycle = 0
+  let consecutiveFailures = 0
 
   while (!shuttingDown) {
     // Day rollover check
@@ -276,21 +198,41 @@ async function main(): Promise<void> {
     globalCycle++
     cyclesThisDay++
 
-    const outcome = await runOneCycle({
+    const outcome = runOneCycle({
       cwd,
-      executor,
       cycleNumber: globalCycle,
-      engineDataDir,
     })
 
     if (shuttingDown) {
       break
     }
 
-    if (outcome === 'NO_DEBT') {
+    appendDaemonLog(cwd, `tick=${globalCycle} outcome=${outcome}`)
+
+    if (outcome === 'FAILED') {
+      consecutiveFailures++
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        appendDaemonLog(
+          cwd,
+          `halting: ${MAX_CONSECUTIVE_FAILURES} consecutive cycle failures`,
+        )
+        console.error(
+          `[daemon] Halting after ${MAX_CONSECUTIVE_FAILURES} consecutive failures.`,
+        )
+        process.exit(1)
+      }
+      // Continue to next tick after short sleep (normal interval)
+      appendDaemonLog(
+        cwd,
+        `consecutive failures=${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES} — sleeping ${INTERVAL_MIN}min`,
+      )
+      await sleep(INTERVAL_MS)
+    } else if (outcome === 'NO_DEBT') {
+      consecutiveFailures = 0
       appendDaemonLog(cwd, `no actionable debt — sleeping ${LONG_SLEEP_MIN}min`)
       await sleep(LONG_SLEEP_MS)
     } else {
+      consecutiveFailures = 0
       appendDaemonLog(cwd, `sleeping ${INTERVAL_MIN}min until next tick`)
       await sleep(INTERVAL_MS)
     }
