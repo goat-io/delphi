@@ -398,6 +398,12 @@ export class GateStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
       return doneOutput(runId, input.cycle)
     }
 
+    // Auto-format before verifying: agent-introduced formatting/import-order
+    // churn is trivially fixable and must never cause a dispute. `pnpm lint`
+    // runs `biome check --write` (safe fixes only) over the knowledge plane.
+    console.log('[gate] auto-formatting (biome check --write) before verify...')
+    spawnSync('pnpm', ['lint'], { cwd, encoding: 'utf8' })
+
     let gateResult = runGate(cwd)
     let green = gateGreen(gateResult)
 
