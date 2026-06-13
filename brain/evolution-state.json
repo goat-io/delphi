@@ -1,25 +1,25 @@
 {
-  "generatedAt": "2026-06-13T20:08:20.625Z",
+  "generatedAt": "2026-06-13T20:18:03.125Z",
   "brainId": "brain_8c16f71c024d4c8c999e18b1",
   "health": {
-    "leaves": 1787,
-    "beliefs": 1057,
-    "evidence": 3420,
-    "relationships": 185,
+    "leaves": 1946,
+    "beliefs": 1195,
+    "evidence": 3763,
+    "relationships": 193,
     "orphanBeliefs": 0,
-    "avgConfidence": 0.5306952141058026,
+    "avgConfidence": 0.529026995979334,
     "staleIndexes": 0,
-    "openQuestions": 39
+    "openQuestions": 41
   },
   "coverageTarget": 0.75,
   "coverage": [
     {
       "regionId": "region_ef673efeebf04b33bf7402b0",
       "regionTitle": "Spec",
-      "score": 0.6749442841287444,
+      "score": 0.6719299326275249,
       "gaps": [
         "low confidence (0.50)",
-        "39 unanswered questions"
+        "41 unanswered questions"
       ]
     },
     {
@@ -86,7 +86,7 @@
     {
       "title": "Average confidence above 0.5",
       "metric": "avgConfidence",
-      "current": 0.5306952141058026,
+      "current": 0.529026995979334,
       "target": 0.5,
       "comparator": ">=",
       "met": true
@@ -102,7 +102,7 @@
     {
       "title": "Open questions triaged below 150",
       "metric": "openQuestions",
-      "current": 39,
+      "current": 41,
       "target": 150,
       "comparator": "<=",
       "met": true
@@ -129,7 +129,7 @@
       "id": "region_ef673efeebf04b33bf7402b0",
       "title": "Spec",
       "kind": "SEEDED",
-      "leafCount": 1394
+      "leafCount": 1547
     },
     {
       "id": "region_34d577e54ed448da95babfdc",
@@ -153,13 +153,13 @@
       "id": "region_eda75ec558354881b3788026",
       "title": "Operations",
       "kind": "SEEDED",
-      "leafCount": 128
+      "leafCount": 129
     },
     {
       "id": "region_abacde651502466fb9044433",
       "title": "Objectives",
       "kind": "SEEDED",
-      "leafCount": 146
+      "leafCount": 151
     }
   ]
 }

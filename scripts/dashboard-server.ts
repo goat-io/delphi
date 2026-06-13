@@ -12,11 +12,13 @@
 // SSE (/api/stream) watches those files and pushes an `update` whenever the
 // loop advances — so an external human watches evolution happen live.
 
+import { execFileSync } from 'node:child_process'
 import {
   closeSync,
   createReadStream,
   existsSync,
   openSync,
+  readdirSync,
   readFileSync,
   readSync,
   statSync,
@@ -36,6 +38,15 @@ const P = {
   rels: resolve(CWD, 'brain', 'relationships.jsonl'),
   uiDist: resolve(CWD, 'apps', 'dashboard', 'dist'),
 }
+
+// Headless agents write their session transcript here (cwd encoded with dashes).
+// We tail the active one to report what the agent is doing right now.
+const TRANSCRIPT_DIR = resolve(
+  process.env.HOME ?? '',
+  '.claude',
+  'projects',
+  `-${CWD.replace(/^\//, '').replace(/\//g, '-')}`,
+)
 
 // ── evolution-state.json ───────────────────────────────────────────────────
 function readState(): unknown {
@@ -233,6 +244,246 @@ function daemonAlive(): boolean {
   return ageMs < 10 * 60 * 1000
 }
 
+// ── live agent roster: who is working, on what, right now ──────────────────
+// Each running agent (the cycle agent AND every subagent it spawns) writes a
+// session transcript JSONL. We surface one row per transcript active in the
+// last ACTIVE_WINDOW_MS: its objective, its latest action, and its latest
+// reasoning ("what's being discussed"). Scales from 1 agent to many — add
+// workers and more rows appear. (At fleet scale across machines, workers
+// should heartbeat into the brain; this local view is the same shape.)
+export interface AgentActivity {
+  id: string
+  role: string // 'agent' | 'explore' | …
+  ageSec: number
+  startedSec: number
+  objective: string
+  action: string | null
+  note: string | null
+  kind: string // reading|editing|running|searching|delegating|thinking|working
+}
+
+const ACTIVE_WINDOW_MS = 90_000
+const MAX_TRANSCRIPT_BYTES = 3_000_000 // excludes the long interactive session
+
+function basename(p: string): string {
+  return p.split('/').filter(Boolean).pop() ?? p
+}
+
+function describeTool(
+  name: string,
+  input: Record<string, unknown>,
+): { action: string; kind: string } {
+  const s = (v: unknown, n = 80) =>
+    String(v ?? '')
+      .slice(0, n)
+      .replace(/\s+/g, ' ')
+  switch (name) {
+    case 'Read':
+      return {
+        action: `Reading ${basename(s(input.file_path, 200))}`,
+        kind: 'reading',
+      }
+    case 'Edit':
+    case 'MultiEdit':
+    case 'Write':
+    case 'NotebookEdit':
+      return {
+        action: `Editing ${basename(s(input.file_path, 200))}`,
+        kind: 'editing',
+      }
+    case 'Bash':
+      return { action: `Running: ${s(input.command, 100)}`, kind: 'running' }
+    case 'Grep':
+    case 'Glob':
+      return { action: `Searching: ${s(input.pattern, 80)}`, kind: 'searching' }
+    case 'Agent':
+      return {
+        action: `Delegating → ${s(input.subagent_type, 24)}: ${s(input.description, 80)}`,
+        kind: 'delegating',
+      }
+    case 'WebFetch':
+    case 'WebSearch':
+      return {
+        action: `Researching: ${s(input.url ?? input.query, 100)}`,
+        kind: 'researching',
+      }
+    default:
+      return { action: name, kind: 'working' }
+  }
+}
+
+function textOf(content: unknown): string {
+  if (typeof content === 'string') {
+    return content
+  }
+  if (Array.isArray(content)) {
+    return content
+      .filter(
+        c =>
+          c &&
+          typeof c === 'object' &&
+          (c as { type?: string }).type === 'text',
+      )
+      .map(c => (c as { text?: string }).text ?? '')
+      .join(' ')
+  }
+  return ''
+}
+
+function readOneAgent(file: string, mtimeMs: number): AgentActivity | null {
+  let raw: string
+  try {
+    raw = readFileSync(file, 'utf8')
+  } catch {
+    return null
+  }
+  const lines = raw.split('\n')
+  let objective = ''
+  let firstTs: number | null = null
+  let action: string | null = null
+  let note: string | null = null
+  let kind = 'working'
+  let role = 'agent'
+
+  for (const line of lines) {
+    if (!line.trim()) {
+      continue
+    }
+    let e: Record<string, unknown>
+    try {
+      e = JSON.parse(line)
+    } catch {
+      continue
+    }
+    const ts =
+      typeof e.timestamp === 'string' ? Date.parse(e.timestamp) : Number.NaN
+    if (!Number.isNaN(ts) && firstTs === null) {
+      firstTs = ts
+    }
+    const msg = e.message as { role?: string; content?: unknown } | undefined
+    if (e.type === 'user' && msg && !objective) {
+      const t = textOf(msg.content).trim()
+      // Skip tool_result-only user turns; we want the initial work prompt.
+      if (t) {
+        // Cycle agents carry "Trigger: X" + "Target: Y" (see buildWorkPrompt).
+        const trig = /Trigger:\s*([A-Z_]+)/.exec(t)
+        const targ = /Target:\s*(.+)/.exec(t)
+        if (trig) {
+          objective = `${trig[1]}${
+            targ ? ` — ${(targ[1] ?? '').trim().slice(0, 60)}` : ''
+          }`
+        } else {
+          // Subagent (Explore etc.): use its first meaningful line.
+          role = 'explore'
+          const firstLine = t
+            .split('\n')
+            .map(s => s.trim())
+            .find(s => s.length > 8 && !/^you are /i.test(s))
+          objective = (firstLine ?? t.split('\n')[0] ?? '').slice(0, 110)
+        }
+      }
+    }
+    if (e.type === 'assistant' && msg) {
+      const content = Array.isArray(msg.content) ? msg.content : []
+      for (const c of content) {
+        const cc = c as {
+          type?: string
+          text?: string
+          name?: string
+          input?: unknown
+        }
+        if (cc.type === 'text' && cc.text && cc.text.trim().length > 12) {
+          note = cc.text.trim().replace(/\s+/g, ' ').slice(0, 240)
+        } else if (cc.type === 'tool_use' && cc.name) {
+          const d = describeTool(
+            cc.name,
+            (cc.input ?? {}) as Record<string, unknown>,
+          )
+          action = d.action
+          kind = d.kind
+        }
+      }
+    }
+  }
+
+  if (!objective && !action && !note) {
+    return null
+  }
+  const now = Date.now()
+  return {
+    id: basename(file)
+      .replace(/\.jsonl$/, '')
+      .slice(0, 8),
+    role,
+    ageSec: Math.round((now - mtimeMs) / 1000),
+    startedSec: firstTs ? Math.round((now - firstTs) / 1000) : 0,
+    objective: objective || '(working)',
+    action,
+    note,
+    kind,
+  }
+}
+
+function readAgents(): AgentActivity[] {
+  let entries: string[]
+  try {
+    entries = readdirSync(TRANSCRIPT_DIR)
+  } catch {
+    return []
+  }
+  const now = Date.now()
+  const candidates: Array<{ file: string; mtimeMs: number }> = []
+  for (const name of entries) {
+    if (!name.endsWith('.jsonl')) {
+      continue
+    }
+    const file = resolve(TRANSCRIPT_DIR, name)
+    let st: ReturnType<typeof statSync>
+    try {
+      st = statSync(file)
+    } catch {
+      continue
+    }
+    if (st.size > MAX_TRANSCRIPT_BYTES) {
+      continue // the long interactive session
+    }
+    if (now - st.mtimeMs > ACTIVE_WINDOW_MS) {
+      continue
+    }
+    candidates.push({ file, mtimeMs: st.mtimeMs })
+  }
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs)
+  const out: AgentActivity[] = []
+  for (const c of candidates.slice(0, 50)) {
+    const a = readOneAgent(c.file, c.mtimeMs)
+    if (a) {
+      out.push(a)
+    }
+  }
+  return out
+}
+
+// Files the cycle is currently changing (uncommitted working tree).
+function workingFiles(): Array<{ path: string; status: string }> {
+  try {
+    const out = execFileSync('git', ['status', '--porcelain'], {
+      cwd: CWD,
+      encoding: 'utf8',
+      timeout: 3000,
+    })
+    return out
+      .split('\n')
+      .filter(l => l.trim())
+      .map(l => ({ status: l.slice(0, 2).trim(), path: l.slice(3) }))
+      .filter(
+        f => !f.path.startsWith('brain/') && f.path !== 'evolution.log.md',
+      )
+      .slice(0, 12)
+  } catch {
+    return []
+  }
+}
+
 // ── knowledge graph (sampled) ──────────────────────────────────────────────
 async function readGraph(limit: number): Promise<{
   nodes: Array<{
@@ -308,6 +559,8 @@ function snapshot() {
     state: readState(),
     cycles: parseCycles(),
     live: parseLive(alive),
+    agents: readAgents(),
+    workingFiles: workingFiles(),
   }
 }
 
@@ -319,6 +572,10 @@ fastify.addHook('onSend', async (_req, reply) => {
 })
 
 fastify.get('/api/snapshot', async () => snapshot())
+fastify.get('/api/agents', async () => ({
+  agents: readAgents(),
+  workingFiles: workingFiles(),
+}))
 fastify.get('/api/cycles', async () => ({ cycles: parseCycles() }))
 fastify.get('/api/graph', async req => {
   const limit = Number((req.query as { limit?: string }).limit ?? 250)
@@ -363,6 +620,15 @@ function broadcast() {
 for (const f of [P.state, P.log, P.daemon]) {
   watchFile(f, { interval: 1500 }, broadcast)
 }
+
+// Agent transcripts change constantly without touching the watched files, so
+// also push on a steady cadence whenever someone is connected — this is what
+// makes the live activity panel feel alive (and keeps scaling to N agents).
+setInterval(() => {
+  if (clients.size > 0) {
+    broadcast()
+  }
+}, 2000)
 
 // Serve the built UI if present, else a hint.
 fastify.get('/', async (_req, reply) => {
