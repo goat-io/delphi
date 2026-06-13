@@ -10,6 +10,7 @@ import {
   MarkerType,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import { useIsMobile } from '../useIsMobile.js'
 
 const KIND_COLORS = {
   BELIEF: '#89b4fa',
@@ -86,6 +87,8 @@ function buildFlow(data) {
 }
 
 export default function KnowledgeGraph() {
+  const isMobile = useIsMobile()
+  // On mobile, default to collapsed — secondary panel
   const [open, setOpen] = useState(false)
   const { data, isLoading } = useQuery({
     queryKey: ['graph'],
@@ -95,9 +98,10 @@ export default function KnowledgeGraph() {
   })
 
   const flow = buildFlow(data)
+  const graphHeight = isMobile ? 300 : 520
 
   return (
-    <section style={{ padding: '0 28px 20px' }}>
+    <section style={{ padding: isMobile ? '0 16px 16px' : '0 28px 20px' }}>
       {/* Collapsible header */}
       <button
         onClick={() => setOpen(o => !o)}
@@ -107,6 +111,7 @@ export default function KnowledgeGraph() {
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '18px 0',
+          minHeight: '36px',
           background: 'none',
           border: 'none',
           borderTop: '1px solid #1e2430',
@@ -128,7 +133,7 @@ export default function KnowledgeGraph() {
       </button>
 
       {open && (
-        <div style={{ height: '520px', borderRadius: '10px', border: '1px solid #1e2430', overflow: 'hidden', background: '#0d1018' }}>
+        <div style={{ height: `${graphHeight}px`, borderRadius: '10px', border: '1px solid #1e2430', overflow: 'hidden', background: '#0d1018' }}>
           {isLoading ? (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#7f8aa3' }}>
               Loading graph…

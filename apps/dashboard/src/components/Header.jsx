@@ -1,5 +1,8 @@
+import { useIsMobile } from '../useIsMobile.js'
+
 /** Header with title and live status pill */
 export default function Header({ live }) {
+  const isMobile = useIsMobile()
   const running = live?.running ?? false
   const phase = live?.phase ?? 'idle'
   const tick = live?.tick ?? 0
@@ -7,14 +10,21 @@ export default function Header({ live }) {
   return (
     <header style={{
       display: 'flex',
-      alignItems: 'center',
+      alignItems: isMobile ? 'flex-start' : 'center',
+      flexDirection: isMobile ? 'column' : 'row',
       justifyContent: 'space-between',
-      padding: '18px 28px',
+      padding: isMobile ? '14px 16px' : '18px 28px',
       borderBottom: '1px solid #1e2430',
       background: '#11141c',
+      gap: isMobile ? '10px' : '0',
     }}>
       <div>
-        <h1 style={{ color: '#e6edf3', fontSize: '20px', fontWeight: 700, letterSpacing: '-0.3px' }}>
+        <h1 style={{
+          color: '#e6edf3',
+          fontSize: isMobile ? '17px' : '20px',
+          fontWeight: 700,
+          letterSpacing: '-0.3px',
+        }}>
           Delphi · Evolution
         </h1>
         <p style={{ color: '#7f8aa3', fontSize: '12px', marginTop: '2px' }}>
@@ -30,6 +40,7 @@ export default function Header({ live }) {
         border: '1px solid #1e2430',
         borderRadius: '20px',
         padding: '6px 14px',
+        alignSelf: isMobile ? 'flex-start' : 'auto',
       }}>
         {/* Pulsing dot */}
         <span style={{ position: 'relative', display: 'inline-flex', width: '10px', height: '10px' }}>

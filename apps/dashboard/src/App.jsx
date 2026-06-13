@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import Header from './components/Header.jsx'
+import { LiveActivity } from './components/LiveActivity.jsx'
 import EvolutionLoop from './components/EvolutionLoop.jsx'
 import BrainGrowth from './components/BrainGrowth.jsx'
 import RegionCoverage from './components/RegionCoverage.jsx'
 import Goals from './components/Goals.jsx'
 import CycleFeed from './components/CycleFeed.jsx'
 import KnowledgeGraph from './components/KnowledgeGraph.jsx'
+import { useIsMobile } from './useIsMobile.js'
 
 async function fetchSnapshot() {
   const res = await fetch('/api/snapshot')
@@ -15,6 +17,7 @@ async function fetchSnapshot() {
 }
 
 export default function App() {
+  const isMobile = useIsMobile()
   const [liveData, setLiveData] = useState(null)
   const [sseOk, setSseOk] = useState(true)
   const esRef = useRef(null)
@@ -81,17 +84,28 @@ export default function App() {
   const state = snapshot?.state
   const cycles = snapshot?.cycles ?? []
   const live = snapshot?.live ?? {}
+  const agents = snapshot?.agents ?? []
+  const workingFiles = snapshot?.workingFiles ?? []
 
   return (
     <div style={{ minHeight: '100vh', background: '#0b0e14' }}>
       <Header live={live} />
       <EvolutionLoop live={live} />
 
-      <main style={{ maxWidth: '1400px', margin: '0 auto' }}>
+      <main style={{
+        maxWidth: isMobile ? '100%' : '1400px',
+        margin: '0 auto',
+        overflowX: 'hidden',
+      }}>
+        <LiveActivity agents={agents} workingFiles={workingFiles} live={live} state={state} />
         <BrainGrowth health={state?.health} cycles={cycles} />
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0 }}>
-          <div style={{ borderRight: '1px solid #1e2430' }}>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
+          gap: 0,
+        }}>
+          <div style={{ borderRight: isMobile ? 'none' : '1px solid #1e2430' }}>
             <RegionCoverage
               coverage={state?.coverage}
               regions={state?.regions}
@@ -109,11 +123,13 @@ export default function App() {
 
       {/* Footer */}
       <footer style={{
-        padding: '16px 28px',
+        padding: isMobile ? '12px 16px' : '16px 28px',
         borderTop: '1px solid #1e2430',
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: '4px',
       }}>
         <span style={{ color: '#3d4559', fontSize: '11px', fontFamily: 'ui-monospace, monospace' }}>
           Delphi Evolution Dashboard

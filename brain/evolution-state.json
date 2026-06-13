@@ -1,13 +1,13 @@
 {
-  "generatedAt": "2026-06-13T20:18:03.125Z",
+  "generatedAt": "2026-06-13T20:27:50.251Z",
   "brainId": "brain_8c16f71c024d4c8c999e18b1",
   "health": {
-    "leaves": 1946,
-    "beliefs": 1195,
-    "evidence": 3763,
-    "relationships": 193,
+    "leaves": 2002,
+    "beliefs": 1235,
+    "evidence": 3905,
+    "relationships": 198,
     "orphanBeliefs": 0,
-    "avgConfidence": 0.529026995979334,
+    "avgConfidence": 0.5288029034059307,
     "staleIndexes": 0,
     "openQuestions": 41
   },
@@ -16,7 +16,7 @@
     {
       "regionId": "region_ef673efeebf04b33bf7402b0",
       "regionTitle": "Spec",
-      "score": 0.6719299326275249,
+      "score": 0.6705170219338882,
       "gaps": [
         "low confidence (0.50)",
         "41 unanswered questions"
@@ -84,19 +84,19 @@
       "met": true
     },
     {
-      "title": "Average confidence above 0.5",
-      "metric": "avgConfidence",
-      "current": 0.529026995979334,
-      "target": 0.5,
-      "comparator": ">=",
-      "met": true
-    },
-    {
       "title": "No stale indexes",
       "metric": "staleIndexes",
       "current": 0,
       "target": 0,
       "comparator": "==",
+      "met": true
+    },
+    {
+      "title": "Average confidence above 0.5",
+      "metric": "avgConfidence",
+      "current": 0.5288029034059307,
+      "target": 0.5,
+      "comparator": ">=",
       "met": true
     },
     {
@@ -129,7 +129,7 @@
       "id": "region_ef673efeebf04b33bf7402b0",
       "title": "Spec",
       "kind": "SEEDED",
-      "leafCount": 1547
+      "leafCount": 1597
     },
     {
       "id": "region_34d577e54ed448da95babfdc",
@@ -153,13 +153,13 @@
       "id": "region_eda75ec558354881b3788026",
       "title": "Operations",
       "kind": "SEEDED",
-      "leafCount": 129
+      "leafCount": 130
     },
     {
       "id": "region_abacde651502466fb9044433",
       "title": "Objectives",
       "kind": "SEEDED",
-      "leafCount": 151
+      "leafCount": 156
     }
   ]
 }

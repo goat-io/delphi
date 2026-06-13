@@ -1,8 +1,12 @@
+import { useIsMobile } from '../useIsMobile.js'
+
 /** Region coverage horizontal bars */
 export default function RegionCoverage({ coverage, regions, coverageTarget }) {
+  const isMobile = useIsMobile()
+
   if (!coverage || coverage.length === 0) {
     return (
-      <section style={{ padding: '20px 28px', borderBottom: '1px solid #1e2430' }}>
+      <section style={{ padding: isMobile ? '14px 16px' : '20px 28px', borderBottom: '1px solid #1e2430' }}>
         <h2 style={{ color: '#7f8aa3', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '1px' }}>
           Region Coverage
         </h2>
@@ -23,7 +27,7 @@ export default function RegionCoverage({ coverage, regions, coverageTarget }) {
   }
 
   return (
-    <section style={{ padding: '20px 28px', borderBottom: '1px solid #1e2430' }}>
+    <section style={{ padding: isMobile ? '14px 16px' : '20px 28px', borderBottom: '1px solid #1e2430' }}>
       <h2 style={{ color: '#7f8aa3', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '14px' }}>
         Region Coverage
         <span style={{ marginLeft: '10px', color: '#3d4559', fontWeight: 400 }}>
@@ -39,7 +43,7 @@ export default function RegionCoverage({ coverage, regions, coverageTarget }) {
 
           return (
             <div key={region.regionId ?? region.regionTitle}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px', flexWrap: 'wrap', gap: '2px' }}>
                 <span style={{ color: '#cdd6f4', fontSize: '13px', fontWeight: 500 }}>
                   {region.regionTitle}
                   {leafCount != null && (

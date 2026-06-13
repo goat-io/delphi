@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useIsMobile } from '../useIsMobile.js'
 
 /** Parse "key=value" health string */
 function parseHealth(str) {
@@ -50,7 +51,6 @@ function CycleCard({ cycle }) {
   const tColor = triggerColor(cycle.trigger)
   const isGreen = cycle.gate === 'GREEN'
   const isClosed = cycle.closure === 'CLOSED'
-  const isComplete = cycle.outcome === 'COMPLETED'
 
   const summary = cycle.agentSummary ?? ''
   const truncated = summary.length > 160 && !expanded ? summary.slice(0, 160) + '…' : summary
@@ -63,11 +63,11 @@ function CycleCard({ cycle }) {
       background: '#171b26',
       border: '1px solid #1e2430',
       borderRadius: '10px',
-      padding: '14px 16px',
+      padding: '12px 14px',
       position: 'relative',
     }}>
       {/* Top row */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
         <span style={{ color: '#7f8aa3', fontSize: '12px', fontFamily: 'ui-monospace, monospace' }}>
           #{cycle.cycle}
         </span>
@@ -169,7 +169,9 @@ function CycleCard({ cycle }) {
                 cursor: 'pointer',
                 fontSize: '12px',
                 marginLeft: '4px',
-                padding: 0,
+                padding: '2px 4px',
+                minHeight: '36px',
+                verticalAlign: 'middle',
               }}
             >
               {expanded ? 'less' : 'more'}
@@ -182,10 +184,11 @@ function CycleCard({ cycle }) {
 }
 
 export default function CycleFeed({ cycles }) {
+  const isMobile = useIsMobile()
   const sorted = [...(cycles ?? [])].sort((a, b) => b.cycle - a.cycle).slice(0, 40)
 
   return (
-    <section style={{ padding: '20px 28px', borderBottom: '1px solid #1e2430' }}>
+    <section style={{ padding: isMobile ? '14px 16px' : '20px 28px', borderBottom: '1px solid #1e2430' }}>
       <h2 style={{ color: '#7f8aa3', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '14px' }}>
         Cycle Feed
         <span style={{ marginLeft: '8px', color: '#3d4559', fontWeight: 400 }}>({sorted.length} shown)</span>
