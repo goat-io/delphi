@@ -5,7 +5,9 @@ import { BrainStore, createDb, migrate } from '@goatlab/delphi-knowledge'
 import type { Leaf } from '@goatlab/delphi-protocol'
 import { nowIso } from '@goatlab/delphi-protocol'
 import { evaluateGoals, seedGoals } from './goals.js'
+import { persistEvaluation } from './governance-bridge.js'
 import { emitDefectTasks, scanLoopAnomalies } from './introspect.js'
+import { getRubricByTitle } from './rubrics.js'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -58,33 +60,91 @@ export async function scanDebt(
 ): Promise<DebtItem[]> {
   const items: DebtItem[] = []
 
-  // ── Introspection first: detect anomalies and auto-emit defect tasks ──────────
-  // Must run before other debt checks so freshly-created loop-defect TASK leaves
-  // surface as QUEUED_TASK items in the same scan.
-  // Anti-recursion guard: introspection tasks themselves failing must not spawn
-  // infinite meta-tasks. The cap (5 active auto-detected tasks) in emitDefectTasks
-  // enforces this. We also do not call scanDebt from within introspect.ts.
-  {
-    const anomalies = await scanLoopAnomalies(store, brainId)
-    if (anomalies.length > 0) {
-      const { created, deduped } = await emitDefectTasks(
-        store,
-        brainId,
-        anomalies,
-      )
-      if (created > 0 || deduped > 0) {
-        console.log(
-          `[scanDebt] introspection: ${anomalies.length} anomalies → created=${created} deduped=${deduped}`,
-        )
-      }
-    }
-  }
-
+  // Fetch brain state upfront — needed for both reconciliation and debt checks.
   const [regions, leaves, healthData] = await Promise.all([
     store.listRegions(brainId),
     store.listLeaves(brainId),
     store.health(brainId),
   ])
+
+  // ── Reconciliation pass: retire stale tasks before emitting new debt ──────────
+  // Run BEFORE emitDefectTasks so that archived auto-detected tasks release
+  // their class-level dedup slot and stale GOAL_GAP tasks are not re-dispatched.
+
+  const anomalies = await scanLoopAnomalies(store, brainId)
+  const currentAnomalySignatures = new Set(anomalies.map(a => a.signature))
+
+  // Read the reconciliation rubric (null if not yet seeded — never hard-require it).
+  const reconcileRubric = await getRubricByTitle(
+    store,
+    brainId,
+    'Stale Task Reconciliation Rubric',
+  )
+
+  // 1. Retire ACTIVE auto-detected introspection tasks whose anomaly is gone.
+  const activeAutoDetected = leaves.filter(
+    l =>
+      l.kind === 'TASK' &&
+      l.status === 'ACTIVE' &&
+      (l.tags ?? []).includes('auto-detected'),
+  )
+  for (const task of activeAutoDetected) {
+    const c = (task.content ?? {}) as Record<string, unknown>
+    const sig = typeof c.target === 'string' ? c.target : null
+    if (sig === null || currentAnomalySignatures.has(sig)) {
+      continue
+    }
+    await store.updateLeaf(task.id, {
+      status: 'ARCHIVED',
+      content: {
+        ...c,
+        closedAt: nowIso(),
+        evidence: 'anomaly-no-longer-reproduces',
+      },
+    })
+    console.log(
+      `[scanDebt] retired introspection task ${task.id} — anomaly resolved: ${sig}`,
+    )
+    if (reconcileRubric) {
+      await persistEvaluation(store, brainId, {
+        rubricId: reconcileRubric.id,
+        targetLeafId: task.id,
+        perspective: 'stale-task-reconciliation',
+        scores: [
+          {
+            criterionId: 'anomaly-resolved',
+            score: 1,
+            rationale: `anomaly signature "${sig}" no longer present in current scan`,
+          },
+          {
+            criterionId: 'goal-met',
+            score: 0,
+            rationale: 'N/A — introspection task, not a goal-gap task',
+          },
+        ],
+        finalScore: 1,
+        verdict: 'approve',
+        rationale: `Anomaly ${sig} resolved; introspection task retired automatically.`,
+      })
+    }
+  }
+
+  // ── Introspection: detect anomalies and auto-emit defect tasks ────────────────
+  // Anti-recursion guard: introspection tasks themselves failing must not spawn
+  // infinite meta-tasks. The cap (5 active auto-detected tasks) in emitDefectTasks
+  // enforces this. We also do not call scanDebt from within introspect.ts.
+  if (anomalies.length > 0) {
+    const { created, deduped } = await emitDefectTasks(
+      store,
+      brainId,
+      anomalies,
+    )
+    if (created > 0 || deduped > 0) {
+      console.log(
+        `[scanDebt] introspection: ${anomalies.length} anomalies → created=${created} deduped=${deduped}`,
+      )
+    }
+  }
 
   // EMPTY_REGION (priority 100): SEEDED regions with 0 leaves
   for (const region of regions) {
@@ -213,6 +273,57 @@ export async function scanDebt(
   // Seed goals idempotently so they exist even on first run
   await seedGoals(store, brainId)
   const goalResults = await evaluateGoals(store, brainId)
+
+  // 2. Retire ACTIVE GOAL_GAP tasks whose goal is now met.
+  // Uses the `leaves` snapshot (fetched above) — GOAL_GAP tasks are created with
+  // content.trigger='GOAL_GAP', distinct from auto-detected tasks already handled.
+  const activeGoalGapTasks = leaves.filter(
+    l =>
+      l.kind === 'TASK' &&
+      l.status === 'ACTIVE' &&
+      (l.content as Record<string, unknown> | undefined)?.trigger ===
+        'GOAL_GAP',
+  )
+  for (const task of activeGoalGapTasks) {
+    const c = (task.content ?? {}) as Record<string, unknown>
+    const gr = goalResults.find(r => r.goal.id === c.target)
+    if (!gr?.met) {
+      continue
+    }
+    await store.updateLeaf(task.id, {
+      status: 'ARCHIVED',
+      content: {
+        ...c,
+        closedAt: nowIso(),
+        evidence: 'goal-met-auto-reconcile',
+      },
+    })
+    console.log(
+      `[scanDebt] retired GOAL_GAP task ${task.id} — goal met: ${gr.goal.title}`,
+    )
+    if (reconcileRubric) {
+      await persistEvaluation(store, brainId, {
+        rubricId: reconcileRubric.id,
+        targetLeafId: task.id,
+        perspective: 'stale-task-reconciliation',
+        scores: [
+          {
+            criterionId: 'goal-met',
+            score: 1,
+            rationale: `${gr.goal.title}: current=${gr.current} satisfies target ${gr.comparator} ${gr.target}`,
+          },
+          {
+            criterionId: 'anomaly-resolved',
+            score: 0,
+            rationale: 'N/A — goal-gap task, not an introspection task',
+          },
+        ],
+        finalScore: 1,
+        verdict: 'approve',
+        rationale: `Goal met: ${gr.goal.title} (current ${gr.current} ${gr.comparator} ${gr.target})`,
+      })
+    }
+  }
 
   for (const gr of goalResults) {
     if (gr.met) {

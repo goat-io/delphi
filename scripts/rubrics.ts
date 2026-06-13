@@ -325,6 +325,36 @@ const STANDING_RUBRICS: Array<{ title: string; content: RubricContent }> = [
       ],
     },
   },
+  {
+    title: 'Stale Task Reconciliation Rubric',
+    content: {
+      criteria: [
+        {
+          id: 'goal-met',
+          name: 'Goal condition met',
+          description:
+            'The goal metric satisfies its target comparator on re-evaluation',
+          weight: 0.6,
+          scoringRange: { min: 0, max: 1 },
+        },
+        {
+          id: 'anomaly-resolved',
+          name: 'Anomaly resolved',
+          description:
+            'The anomaly signature no longer reproduces in the current scan',
+          weight: 0.4,
+          scoringRange: { min: 0, max: 1 },
+        },
+      ],
+      scoringMethod: 'WEIGHTED',
+      qualityGate: 0.6,
+      rejectGate: 0.0,
+      derivedFrom: [
+        'RFC-0029 §Lease-Semantics',
+        'QUEUED_TASK: leaf_f5fa2b87a5d843a3ba8ac194 — scanDebt must retire stale tasks whose goal/anomaly is resolved',
+      ],
+    },
+  },
 ]
 
 // ── seedRubrics ───────────────────────────────────────────────────────────────

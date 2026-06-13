@@ -473,6 +473,103 @@ describe('evolve harness', () => {
     expect(ids).not.toContain(freshTask.id)
   })
 
+  it('9. GOAL_GAP reconciliation: a met-goal GOAL_GAP task is archived by scanDebt, not re-dispatched', async () => {
+    const opsRegion = await store.getRegionByTitle(brainId, 'Operations')
+    const opsRegionId = opsRegion?.id
+
+    // Create an OBJECT leaf tagged 'goal' with a metric that is trivially met
+    // (openQuestions <= 999 — the test brain has far fewer than 999 questions).
+    const goalLeaf = await store.createLeaf({
+      brainId,
+      kind: 'OBJECT',
+      status: 'ACTIVE',
+      title: 'Reconciliation test goal: open questions trivially low',
+      aliases: [],
+      tags: ['goal'],
+      regionId: opsRegionId,
+      content: { metric: 'openQuestions', target: 999, comparator: '<=' },
+    })
+
+    // Create a GOAL_GAP task pointing at this (already-met) goal
+    const staleGoalGapTask = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'ACTIVE',
+      title:
+        '[GOAL_GAP] Reconciliation test goal: open questions trivially low',
+      aliases: [],
+      tags: [],
+      regionId: opsRegionId,
+      content: {
+        trigger: 'GOAL_GAP',
+        target: goalLeaf.id,
+        priority: 90,
+        origin: 'evolve-harness',
+        closureCriteria: 'goal metric meets target on re-evaluation',
+      },
+    })
+
+    // scanDebt must retire the stale task and must NOT emit a new GOAL_GAP item for it
+    const debt = await scanDebt(store, brainId)
+
+    // Task must now be ARCHIVED
+    const refreshed = await store.getLeaf(staleGoalGapTask.id)
+    expect(refreshed?.status).toBe('ARCHIVED')
+    expect((refreshed?.content as Record<string, unknown>).evidence).toBe(
+      'goal-met-auto-reconcile',
+    )
+    expect(
+      (refreshed?.content as Record<string, unknown>).closedAt,
+    ).toBeDefined()
+
+    // scanDebt must NOT surface a new GOAL_GAP item for this already-met goal
+    const goalGapItems = debt.filter(d => d.trigger === 'GOAL_GAP')
+    const reDispatched = goalGapItems.find(d => d.target === goalLeaf.id)
+    expect(reDispatched).toBeUndefined()
+  })
+
+  it('10. Introspection reconciliation: auto-detected task whose anomaly is gone is archived by scanDebt', async () => {
+    const opsRegion = await store.getRegionByTitle(brainId, 'Operations')
+    const opsRegionId = opsRegion?.id
+
+    // Create a fake auto-detected introspection task pointing at a non-existent anomaly.
+    // In a fresh test brain with no evolution.log.md anomalies, this signature will
+    // never appear in scanLoopAnomalies → task should be retired automatically.
+    const staleIntrospTask = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'ACTIVE',
+      title: '[loop-defect] UNVERIFIED_CLOSURE: unverified:leaf_nonexistent',
+      statement: 'Anomaly that no longer reproduces.',
+      aliases: [],
+      tags: ['loop-defect', 'auto-detected'],
+      regionId: opsRegionId,
+      content: {
+        trigger: 'HUMAN_REQUEST',
+        queued: true,
+        target: 'unverified:leaf_nonexistent_stale_test',
+        priority: 45,
+        origin: 'introspection',
+        anomalyKind: 'UNVERIFIED_CLOSURE',
+        evidence: 'brain:leaf:leaf_nonexistent_stale_test',
+        closureCriteria:
+          'anomaly class no longer reproduced in a subsequent run + regression coverage',
+      },
+    })
+
+    await scanDebt(store, brainId)
+
+    // Task must now be ARCHIVED
+    const refreshed = await store.getLeaf(staleIntrospTask.id)
+    expect(refreshed?.status).toBe('ARCHIVED')
+    expect((refreshed?.content as Record<string, unknown>).evidence).toBe(
+      'anomaly-no-longer-reproduces',
+    )
+    expect(
+      (refreshed?.content as Record<string, unknown>).closedAt,
+    ).toBeDefined()
+  })
+
   it('7. buildWorkPrompt: EMPTY_REGION contains closure criteria and WORK COMPLETE rule; SPEC_GAP contains RFC-9999', async () => {
     const emptyItem: DebtItem = {
       trigger: 'EMPTY_REGION',

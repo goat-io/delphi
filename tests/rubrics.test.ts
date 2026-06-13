@@ -39,10 +39,10 @@ afterAll(async () => {
 describe('rubrics', () => {
   it('1. seedRubrics is idempotent and criteria weights sum to 1.0', async () => {
     const first = await seedRubrics(store, brainId)
-    expect(first.length).toBe(10)
+    expect(first.length).toBe(11)
 
     const second = await seedRubrics(store, brainId)
-    expect(second.length).toBe(10)
+    expect(second.length).toBe(11)
 
     for (let i = 0; i < first.length; i++) {
       expect(first[i]!.id).toBe(second[i]!.id)
