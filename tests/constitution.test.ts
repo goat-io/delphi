@@ -47,7 +47,40 @@ afterAll(async () => {
 // ── 1. classifyWorkOrder ──────────────────────────────────────────────────────
 
 describe('classifyWorkOrder', () => {
-  it('npm-publish: "Publish delphi-protocol to npm" → humanImpact=true', () => {
+  // ── npm-publish: ownership-conditional ──────────────────────────────────
+
+  it('npm-publish owned scope: "Publish @goatlab/delphi-protocol to npm" → humanImpact=false', () => {
+    // Scope-qualified name under @goatlab (owned) → autonomous
+    const result = classifyWorkOrder(
+      { title: 'Publish @goatlab/delphi-protocol to npm' },
+      '',
+    )
+    expect(result.humanImpact).toBe(false)
+    expect(result.reasons).toHaveLength(0)
+  })
+
+  it('npm-publish owned scope: "npm publish @goatlab/delphi-core" → humanImpact=false', () => {
+    const result = classifyWorkOrder(
+      { title: 'npm publish @goatlab/delphi-core' },
+      '',
+    )
+    expect(result.humanImpact).toBe(false)
+    expect(result.reasons).toHaveLength(0)
+  })
+
+  it('npm-publish bare unscoped: "Publish our delphi-knowledge package to npm" → humanImpact=true (conservative: no @scope token)', () => {
+    // No @scope/name token present → conservative default = boundary action.
+    // The autonomous path requires explicit scope-qualified names like @goatlab/pkg-name.
+    const result = classifyWorkOrder(
+      { title: 'Publish our delphi-knowledge package to npm' },
+      '',
+    )
+    expect(result.humanImpact).toBe(true)
+    expect(result.reasons.some(r => r.includes('npm-publish'))).toBe(true)
+  })
+
+  it('npm-publish bare unscoped: "Publish delphi-protocol to npm" → humanImpact=true (no scope token, conservative)', () => {
+    // Original test phrasing — still boundary because no @scope/ token
     const result = classifyWorkOrder(
       { title: 'Publish delphi-protocol to npm' },
       'Publish delphi-protocol to npm registry',
@@ -55,6 +88,44 @@ describe('classifyWorkOrder', () => {
     expect(result.humanImpact).toBe(true)
     expect(result.reasons.some(r => r.includes('npm-publish'))).toBe(true)
   })
+
+  it('npm-publish foreign scope: "Publish lodash-clone to npm" → humanImpact=true', () => {
+    const result = classifyWorkOrder(
+      { title: 'Publish lodash-clone to npm' },
+      '',
+    )
+    expect(result.humanImpact).toBe(true)
+    expect(result.reasons.some(r => r.includes('npm-publish'))).toBe(true)
+  })
+
+  it('npm-publish foreign scope: "Publish @someorg/thing to npm" → humanImpact=true', () => {
+    const result = classifyWorkOrder(
+      { title: 'Publish @someorg/thing to npm' },
+      '',
+    )
+    expect(result.humanImpact).toBe(true)
+    expect(result.reasons.some(r => r.includes('npm-publish'))).toBe(true)
+  })
+
+  it('npm-publish foreign scope: "Publish @evilcorp/malware to npm" → humanImpact=true', () => {
+    const result = classifyWorkOrder(
+      { title: 'Publish @evilcorp/malware to npm' },
+      '',
+    )
+    expect(result.humanImpact).toBe(true)
+    expect(result.reasons.some(r => r.includes('npm-publish'))).toBe(true)
+  })
+
+  it('npm-publish mixed scopes (owned + foreign) → humanImpact=true (any foreign target = boundary)', () => {
+    const result = classifyWorkOrder(
+      { title: 'Publish @goatlab/delphi-core and @foreign/pkg to npm' },
+      '',
+    )
+    expect(result.humanImpact).toBe(true)
+    expect(result.reasons.some(r => r.includes('npm-publish'))).toBe(true)
+  })
+
+  // ── non-publish cases ────────────────────────────────────────────────────
 
   it('internal code work: "Refactor resolve.ts thresholds" → humanImpact=false', () => {
     const result = classifyWorkOrder(

@@ -246,7 +246,11 @@ export class PrepareStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
 
 // ── Step 2b: guard ────────────────────────────────────────────────────────────
 // Runs the ConstitutionGuard on the work order. If blocked → task DISPUTED, end.
-// If requiresHuman (spec work) → sets guardRequiresReview=true, continues.
+// Sets guardRequiresReview=true for work classes that need perspective review
+// (SPEC_GAP, QUEUED_TASK, rfc-touching), false for docs/maintenance.
+// NOTE: guardRequiresReview is independent of verdict.requiresHuman — the new
+// inside-boundary constitution has requiresHuman=false for code/spec work, but
+// those work classes still need perspective review + arbiter escalation.
 
 export class GuardStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
   readonly stepName = 'guard' as const
@@ -289,9 +293,18 @@ export class GuardStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
       return doneOutput(runId, input.cycle)
     }
 
+    // Perspective review needed for code/RFC work, not for docs/maintenance.
+    // Cannot use verdict.requiresHuman — that flag is for human-boundary actions only.
+    const trigger = state.trigger ?? ''
+    const detail = state.detail ?? ''
+    const requiresReview =
+      trigger === 'SPEC_GAP' ||
+      trigger === 'QUEUED_TASK' ||
+      detail.includes('rfcs/')
+
     writeState(cwd, runId, {
       guardAllow: true,
-      guardRequiresReview: verdict.requiresHuman,
+      guardRequiresReview: requiresReview,
       guardReasons: verdict.reasons,
     })
     return doneOutput(runId, input.cycle)

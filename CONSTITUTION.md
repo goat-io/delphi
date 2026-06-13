@@ -34,15 +34,34 @@ Agents MAY execute the following without human approval:
 
 Agents MUST NOT execute the following without explicit human approval:
 
-- Publishing or releasing packages to npm (affects external consumers = humans)
+- Publishing to, claiming, or modifying packages under npm scopes we do NOT own
+  (foreign @scope/* names or bare unscoped names we don't control)
 - Modifying or opening pull requests / issues on OTHER repositories
 - Sending messages, emails, or notifications to any person
 - Any external service interaction that is visible to or affects other people
 - Spending money beyond configured budgets (payment APIs, cloud cost actions)
 
 Action classes:
-  npm-publish, external-pr, external-issue, email, message,
-  notification, external-api-write, payment
+  npm-publish (conditional — see below), external-pr, external-issue, email,
+  message, notification, external-api-write, payment
+
+### npm-publish — Ownership-Conditional
+
+Publishing or releasing packages under scopes we own (@goatlab and any scope
+listed in DELPHI_OWNED_NPM_SCOPES) is **AUTONOMOUS** — they are our property
+and every consumer is one of our own projects (e.g. fluent, other goat-io repos).
+
+Publishing to, claiming, or modifying packages under scopes we do NOT own
+remains a boundary action (requires human approval).
+
+Conservative default: if publish intent is detected but no scope-qualified
+package name (@scope/name) appears in the work order, the classifier defaults
+to humanImpact=true. Use explicit @goatlab/package-name tokens for autonomous
+publishing.
+
+Responsibility: autonomous publishing still requires the gate green (pnpm
+typecheck && pnpm lint:check && pnpm test) and correct semver. A breaking
+change MUST be published as a major version bump.
 
 ---
 

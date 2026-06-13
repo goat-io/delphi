@@ -284,4 +284,24 @@ describe('governance bridge', () => {
       expect(result.score).toBeGreaterThan(0.3)
     }
   })
+
+  it('9. guardRequiresReview: trigger-based — QUEUED_TASK/SPEC_GAP need review; docs do not', () => {
+    // This is the logic embedded in GuardStep.handle() for guardRequiresReview.
+    // It must be independent of verdict.requiresHuman (now false for inside-boundary
+    // work in the new constitution — see makeConstitutionGuard in governance-bridge.ts).
+    const requiresReviewFor = (trigger: string, detail = '') =>
+      trigger === 'SPEC_GAP' ||
+      trigger === 'QUEUED_TASK' ||
+      detail.includes('rfcs/')
+
+    expect(requiresReviewFor('SPEC_GAP')).toBe(true)
+    expect(requiresReviewFor('QUEUED_TASK')).toBe(true)
+    expect(requiresReviewFor('EMPTY_REGION')).toBe(false)
+    expect(requiresReviewFor('OPEN_QUESTION')).toBe(false)
+    expect(requiresReviewFor('GOAL_GAP')).toBe(false)
+    // detail mentioning rfcs/ also triggers review regardless of trigger type
+    expect(requiresReviewFor('GOAL_GAP', 'this touches rfcs/RFC-0001.md')).toBe(
+      true,
+    )
+  })
 })
