@@ -1,5 +1,5 @@
 # AGENTS.md
-# Delphi Knowledge Operating System
+# Delphi — A Framework for Building Self-Evolving Systems
 ## Agent Context & Working Agreement
 
 Version: 0.1
@@ -23,7 +23,12 @@ to a human.
 
 # What Is Delphi?
 
-Delphi is a Knowledge Operating System.
+Delphi is a **framework for building self-evolving systems**.
+
+See [MANIFESTO.md](./MANIFESTO.md) for the full vision. One line:
+
+> Evolution is not intelligence. Evolution is the process by which
+> intelligence emerges.
 
 Delphi is NOT:
 
@@ -32,49 +37,47 @@ Delphi is NOT:
 - A wiki
 - A graph database
 - A RAG framework
+- An agent framework
 
-Delphi is a system designed to transform:
+Delphi starts with **evolution**, not with agents. Evolution follows seven
+fundamental dynamics that any system can run continuously to improve over time:
 
-Reality
-↓
-Assets
-↓
-Evidence
-↓
-Knowledge
-↓
-Understanding
-↓
-Navigation
-↓
-Evaluation
-↓
-Decision
-↓
-Action
-↓
-Learning
+1. **Understand** the current state.
+2. **Learn** from existing knowledge and prior attempts.
+3. **Generate** new hypotheses or actions.
+4. **Execute** changes.
+5. **Evaluate** outcomes.
+6. **Incorporate** successful adaptations.
+7. **Repeat** indefinitely.
 
-into a continuously evolving Brain.
+Evolution requires knowledge — a system cannot improve itself if it cannot
+understand what exists, what was tried, why decisions were made, and what the
+consequences were. So Delphi builds the **knowledge substrate** that makes the
+loop possible: representing Knowledge, Evidence, Decisions, Assumptions,
+Relationships, Outcomes, and Confidence as interconnected structures that both
+humans and agents can navigate, evaluate, and apply.
+
+This repo runs the loop on itself: its own knowledge is a live Brain, and an
+autonomous daemon executes the seven steps against the repository continuously.
 
 ---
 
 # Mission
 
-The mission of Delphi is:
+We are building the **knowledge substrate that allows autonomous systems to
+learn from the past, adapt to the present, and continuously improve their
+future.**
 
-To build a universal protocol for representing, navigating, evaluating, evolving, and federating knowledge.
+The goal is not smarter agents. The goal is systems capable of continuous,
+self-directed evolution — agents are merely one mechanism through which that
+evolution occurs.
 
-The same protocol should work for:
+> Intelligence is not knowing everything. Intelligence is knowing how to find,
+> evaluate, and apply the right knowledge at the right time.
 
-- Companies
-- Engineering
-- Law
-- Medicine
-- History
-- Research
-- Personal Knowledge
-- Civilization-scale knowledge
+The same substrate should work across domains — engineering, law, medicine,
+history, research, organizations, personal and civilization-scale knowledge —
+because the evolutionary dynamics are universal.
 
 ---
 

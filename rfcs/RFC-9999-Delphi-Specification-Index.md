@@ -19,16 +19,24 @@ It defines:
 
 # Vision
 
-Delphi is an Agent Knowledge & Decision Protocol.
+Delphi is a framework for building **self-evolving systems** — see
+[MANIFESTO.md](../MANIFESTO.md). Evolution is the north star; knowledge is the
+substrate that makes it possible.
 
-Its purpose is to help intelligent systems:
+Its purpose is to provide the knowledge substrate that lets autonomous systems
+run the evolutionary loop continuously:
 
-- Acquire Knowledge
-- Evaluate Knowledge
-- Make Decisions
-- Generate Research
-- Evolve Ontologies
-- Improve Continuously
+- Understand the current state
+- Learn from existing knowledge and prior attempts
+- Generate new hypotheses or actions
+- Execute changes
+- Evaluate outcomes
+- Incorporate successful adaptations
+- Repeat indefinitely
+
+To serve that loop, the protocol lets intelligent systems acquire knowledge,
+evaluate it, make decisions, generate research, evolve ontologies, and improve
+continuously.
 
 ---
 
