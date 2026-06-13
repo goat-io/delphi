@@ -412,3 +412,5 @@ Automatically maintained by `pnpm evolve:loop`.
 | Health before | leaves=1276 beliefs=687 evidence=2354 openQ=99 |
 | Health after | leaves=1276 beliefs=687 evidence=2354 openQ=99 |
 | Dispute | terminal-reject |
+<!-- daemon 2026-06-13T18:22:08.570Z tick=1 outcome=COMPLETED -->
+<!-- daemon 2026-06-13T18:22:08.571Z sleeping 1min until next tick -->
