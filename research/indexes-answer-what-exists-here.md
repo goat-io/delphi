@@ -3,7 +3,7 @@ name: indexes-answer-what-exists-here
 type: research
 status: closed
 verdict: extraction-noise
-leaf_id: leaf_67e1aafe1f844bbea85f7aa3
+leaf_id: leaf_687f99438b3e4c6099bb88c3
 ---
 
 ## Verdict

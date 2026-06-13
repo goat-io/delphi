@@ -1442,6 +1442,28 @@ export class VerifyClosureStep extends FunctionStep<
             evidence: `commit ${state.commitHash}: ${state.agentSummaryLine}`,
           },
         })
+
+        // IDEMPOTENCY (RFC-0026 lifecycle): closing the cycle resolves the TASK,
+        // but the SOURCE that generated the debt must also transition out of its
+        // OPEN state — otherwise detection re-surfaces it every scan (the loop
+        // spins on an already-answered question / already-filled gap). An
+        // OPEN_QUESTION's source is the QUESTION leaf (state.target); mark it
+        // ANSWERED and archive it so scanDebt (which only picks ACTIVE questions)
+        // never re-dispatches it. Re-scanning a resolved item is now a no-op.
+        if (state.trigger === 'OPEN_QUESTION' && state.target) {
+          const q = await store.getLeaf(state.target)
+          if (q && q.kind === 'QUESTION' && q.status === 'ACTIVE') {
+            await store.updateLeaf(q.id, {
+              status: 'ARCHIVED',
+              content: {
+                ...(q.content ?? {}),
+                questionStatus: 'ANSWERED',
+                resolvedBy: state.taskId,
+                resolvedAt: new Date().toISOString(),
+              },
+            })
+          }
+        }
       } else {
         const existing = await store.getLeaf(state.taskId!)
         await store.updateLeaf(state.taskId!, {
