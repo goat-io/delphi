@@ -318,6 +318,112 @@ describe('introspect harness', () => {
     await store.updateLeaf(arbiterEval.id, { status: 'ARCHIVED' })
   })
 
+  it('8. DISPUTED task with terminalReject=true → NOT in scanLoopAnomalies output', async () => {
+    // A dispute caused by a correct arbiter/review REJECT is terminal.
+    // Re-attempting cannot help, so introspect must skip it entirely.
+    const terminalTask = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'DISPUTED',
+      title: 'Terminal rejected RFC',
+      aliases: [],
+      tags: [],
+      content: {
+        blocked: 'Perspective review rejected: redundancy score 0.15',
+        terminalReject: true,
+      },
+    })
+
+    const anomalies = await scanLoopAnomalies(store, brainId)
+    const found = anomalies.find(
+      a => a.signature === `disputed:${terminalTask.id}`,
+    )
+    expect(found).toBeUndefined()
+
+    // Clean up
+    await store.updateLeaf(terminalTask.id, { status: 'ARCHIVED' })
+  })
+
+  it('9. DISPUTED task WITHOUT terminalReject (infra failure) → still detected as DISPUTED_TASK anomaly', async () => {
+    // An infra-failure dispute ("gate red after fix attempt") is fixable —
+    // the maintenance loop should see it and re-attempt.
+    const infraTask = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'DISPUTED',
+      title: 'Gate failure task',
+      aliases: [],
+      tags: [],
+      content: { blocked: 'gate red after fix attempt' },
+    })
+
+    const anomalies = await scanLoopAnomalies(store, brainId)
+    const found = anomalies.find(
+      a => a.signature === `disputed:${infraTask.id}`,
+    )
+    expect(found).toBeDefined()
+    expect(found?.kind).toBe('DISPUTED_TASK')
+
+    // Clean up
+    await store.updateLeaf(infraTask.id, { status: 'ARCHIVED' })
+  })
+
+  it('10. Log with terminal-reject Dispute row → no ROLLBACK/DISPUTED_TASK; normal RED gate → still yields ROLLBACK', async () => {
+    // Cycle A: DISPUTED gate + "| Dispute | terminal-reject |" → must NOT produce ROLLBACK/DISPUTED_TASK
+    // Cycle B: RED gate without terminal-reject → must produce ROLLBACK
+    const fixtureLog = `# Evolution Log
+
+## Cycle 10 — 2026-02-01T10:00:00.000Z
+
+| Field | Value |
+|-------|-------|
+| Task | leaf_terminal001 — [SPEC_GAP] Some RFC |
+| Trigger | SPEC_GAP |
+| Agent summary | Drafted RFC but arbiter rejected it. |
+| Gate | DISPUTED |
+| Commit | n/a |
+| Closure | DISPUTED |
+| Dispute | terminal-reject |
+
+## Cycle 11 — 2026-02-01T11:00:00.000Z
+
+| Field | Value |
+|-------|-------|
+| Task | leaf_infra002 — [QUEUED_TASK] Fix types |
+| Trigger | QUEUED_TASK |
+| Agent summary | Applied fix but typecheck failed. |
+| Gate | RED |
+| Commit | n/a |
+| Closure | OPEN |
+`
+
+    const tmpDir = await mkdtemp(join(tmpdir(), 'delphi-terminal-log-'))
+    const tmpLogPath = join(tmpDir, 'evolution.log.md')
+    await writeFile(tmpLogPath, fixtureLog, 'utf-8')
+
+    const anomalies = await scanLoopAnomalies(store, brainId, {
+      logPath: tmpLogPath,
+    })
+
+    const logAnomalies = anomalies.filter(a =>
+      a.evidence.startsWith('evolution.log.md'),
+    )
+
+    // Cycle 10 (terminal-reject) must produce zero anomalies
+    const terminalAnomalies = logAnomalies.filter(a =>
+      a.evidence.includes('2026-02-01T10:00:00.000Z'),
+    )
+    expect(terminalAnomalies.length).toBe(0)
+
+    // Cycle 11 (plain RED) must still produce a ROLLBACK
+    const rollback = logAnomalies.find(
+      a =>
+        a.kind === 'ROLLBACK' &&
+        a.evidence.includes('2026-02-01T11:00:00.000Z'),
+    )
+    expect(rollback).toBeDefined()
+  })
+
   it('5. No circular loopAnomalies goal — anomaly count is a health metric, not a competing goal', async () => {
     // The "No unattended loop anomalies" goal was removed: it was circular
     // (satisfied only by closing maintenance tasks that ranked below it, so it

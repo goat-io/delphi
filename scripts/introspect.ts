@@ -62,6 +62,11 @@ export async function scanLoopAnomalies(
     }
     if (leaf.status === 'DISPUTED') {
       const c = (leaf.content ?? {}) as Record<string, unknown>
+      // Terminal disputes are correct refusals (arbiter/review REJECT).
+      // Re-attempting cannot help — do NOT emit an anomaly for them.
+      if (c.terminalReject === true) {
+        continue
+      }
       const blocked = typeof c.blocked === 'string' ? c.blocked : ''
       const detail = blocked
         ? `${leaf.title} — blocked: ${blocked}`
@@ -182,6 +187,16 @@ export async function scanLoopAnomalies(
       // Extract agent summary line
       const summaryMatch = block.match(/\|\s*Agent summary\s*\|\s*(.+?)\s*\|/)
       const agentSummary = summaryMatch ? summaryMatch[1]!.trim() : ''
+
+      // Check if this cycle was a terminal refusal (correct arbiter/review REJECT).
+      // Terminal disputes must NOT produce ROLLBACK or DISPUTED_TASK anomalies —
+      // re-attempting cannot fix a correct refusal, so routing them to the
+      // maintenance loop would create an infinite livelock.
+      const disputeMatch = block.match(/\|\s*Dispute\s*\|\s*(\S+)\s*\|/)
+      const disputeValue = disputeMatch ? disputeMatch[1]!.trim() : ''
+      if (disputeValue === 'terminal-reject') {
+        continue
+      }
 
       if (gateResult === 'RED') {
         add({

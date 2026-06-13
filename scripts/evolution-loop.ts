@@ -539,6 +539,9 @@ export interface CycleRecord {
   closureStatus: string
   healthBefore: string
   healthAfter: string
+  /** Set to 'terminal-reject' when the dispute is a correct refusal (arbiter/review REJECT).
+   *  Introspect uses this to skip emitting ROLLBACK/DISPUTED_TASK anomalies for these cycles. */
+  dispute?: string
 }
 
 export function appendCycleLog(cwd: string, rec: CycleRecord): void {
@@ -550,11 +553,7 @@ export function appendCycleLog(cwd: string, rec: CycleRecord): void {
     )
   }
 
-  const entry = [
-    `## Cycle ${rec.cycle} — ${rec.timestamp}`,
-    '',
-    `| Field | Value |`,
-    `|-------|-------|`,
+  const rows = [
     `| Task | ${rec.taskId} — ${rec.taskTitle} |`,
     `| Trigger | ${rec.trigger} |`,
     `| Agent summary | ${rec.agentSummary} |`,
@@ -563,6 +562,17 @@ export function appendCycleLog(cwd: string, rec: CycleRecord): void {
     `| Closure | ${rec.closureStatus} |`,
     `| Health before | ${rec.healthBefore} |`,
     `| Health after | ${rec.healthAfter} |`,
+  ]
+  if (rec.dispute) {
+    rows.push(`| Dispute | ${rec.dispute} |`)
+  }
+
+  const entry = [
+    `## Cycle ${rec.cycle} — ${rec.timestamp}`,
+    '',
+    `| Field | Value |`,
+    `|-------|-------|`,
+    ...rows,
     '',
   ].join('\n')
 

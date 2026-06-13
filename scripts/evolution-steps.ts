@@ -78,6 +78,7 @@ export interface CycleState {
   gateGreenResult?: boolean
   gateOutput?: string
   disputed?: boolean
+  terminalReject?: boolean // true when dispute is a correct refusal (arbiter/review REJECT)
   // Written by commit
   commitHash?: string
   committed?: boolean
@@ -126,7 +127,11 @@ export function doneOutput(
   return { output: { done: true, runId, cycle } as DoneJsonObject }
 }
 
-async function markTaskDisputed(taskId: string, reason: string): Promise<void> {
+async function markTaskDisputed(
+  taskId: string,
+  reason: string,
+  opts?: { terminal?: boolean },
+): Promise<void> {
   const cwd = process.cwd()
   const dataDir = resolve(cwd, process.env.DELPHI_DATA_DIR ?? '.delphi/brain')
   const db = await createDb({ dataDir })
@@ -135,9 +140,14 @@ async function markTaskDisputed(taskId: string, reason: string): Promise<void> {
   try {
     const existing = await store.getLeaf(taskId)
     if (existing) {
+      const extraContent = opts?.terminal ? { terminalReject: true } : {}
       await store.updateLeaf(taskId, {
         status: 'DISPUTED' as any,
-        content: { ...(existing.content ?? {}), blocked: reason },
+        content: {
+          ...(existing.content ?? {}),
+          blocked: reason,
+          ...extraContent,
+        },
       })
     }
   } finally {
@@ -723,9 +733,11 @@ export class ReviewStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
       await markTaskDisputed(
         state.taskId!,
         `Perspective review rejected: ${reviewDecision.reasons.join('; ')}. Tradeoff matrix: ${JSON.stringify(matrix.verdicts)}`,
+        { terminal: true },
       )
       writeState(cwd, runId, {
         disputed: true,
+        terminalReject: true,
         gateGreenResult: false,
       })
       return doneOutput(runId, input.cycle)
@@ -802,7 +814,7 @@ export class ReviewStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
         return doneOutput(runId, input.cycle)
       }
 
-      // Arbiter rejected — rollback + DISPUTED path
+      // Arbiter rejected — rollback + DISPUTED path (terminal: correct refusal)
       console.error(
         `[review] ARBITER REJECTED — rolling back. Rationale: ${arbiterVerdict.rationale}`,
       )
@@ -811,9 +823,11 @@ export class ReviewStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
       await markTaskDisputed(
         state.taskId!,
         `Arbiter escalation rejected (score ${reviewDecision.score.toFixed(2)}): ${arbiterVerdict.rationale}. Perspective scores: ${rubricScoresSummary}`,
+        { terminal: true },
       )
       writeState(cwd, runId, {
         disputed: true,
+        terminalReject: true,
         gateGreenResult: false,
       })
       return doneOutput(runId, input.cycle)
@@ -1293,6 +1307,7 @@ export class LogStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
       closureStatus: state.closureStatus ?? 'UNKNOWN',
       healthBefore: state.healthBeforeStr ?? '',
       healthAfter: state.healthAfterStr ?? state.healthBeforeStr ?? '',
+      ...(state.terminalReject ? { dispute: 'terminal-reject' } : {}),
     })
 
     // Always commit the log atomically within this cycle (fix: DISPUTED cycles
