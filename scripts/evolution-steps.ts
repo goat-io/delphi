@@ -560,6 +560,43 @@ export class ReviewStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
 
     console.log(`[review] pid=${process.pid} Running perspective review...`)
 
+    // Read "Review Decision Rubric" for thresholds (best-effort — fallback to constants)
+    const dataDir = resolve(cwd, process.env.DELPHI_DATA_DIR ?? '.delphi/brain')
+    const evalDb = await createDb({ dataDir })
+    await migrate(evalDb)
+    const evalStore = new BrainStore(evalDb)
+
+    let reviewDeciderRubricId = 'review-decision-rubric'
+    let approveThreshold = 0.7
+    let rejectThreshold = 0.3
+    try {
+      const reviewBrain = await evalStore
+        .getBrainByName('delphi')
+        .catch(() => null)
+      if (reviewBrain) {
+        const reviewRubric = await getRubricByTitle(
+          evalStore,
+          reviewBrain.id,
+          'Review Decision Rubric',
+        ).catch(() => null)
+        if (reviewRubric) {
+          reviewDeciderRubricId = reviewRubric.id
+          const rc = reviewRubric.content as unknown as {
+            qualityGate?: number
+            rejectGate?: number
+          }
+          if (typeof rc.qualityGate === 'number') {
+            approveThreshold = rc.qualityGate
+          }
+          if (typeof rc.rejectGate === 'number') {
+            rejectThreshold = rc.rejectGate
+          }
+        }
+      }
+    } catch {
+      // non-fatal: use constants as fallback
+    }
+
     // Build a Decision object from the work order for the reviewer
     const decision: Decision = {
       name: state.taskId ?? 'unknown',
@@ -586,20 +623,16 @@ export class ReviewStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
     const perspectives = perspectivesForWorkClass(workClass)
 
     console.log(
-      `[review] pid=${process.pid} workClass=${workClass} perspectives=[${perspectives.map(p => p.name).join(',')}]`,
+      `[review] pid=${process.pid} workClass=${workClass} perspectives=[${perspectives.map(p => p.name).join(',')}] approveThreshold=${approveThreshold} rejectThreshold=${rejectThreshold}`,
     )
 
     const reviewer = makePerspectiveReviewer(cwd)
-    const decider = makeReviewDecider()
+    const decider = makeReviewDecider({ approveThreshold, rejectThreshold })
 
     const matrix = await reviewer.review(decision, perspectives)
     const reviewDecision = decider.decide(matrix, perspectives)
 
-    // Persist one EVALUATION leaf per perspective (best-effort — don't block the cycle)
-    const dataDir = resolve(cwd, process.env.DELPHI_DATA_DIR ?? '.delphi/brain')
-    const evalDb = await createDb({ dataDir })
-    await migrate(evalDb)
-    const evalStore = new BrainStore(evalDb)
+    // Persist one EVALUATION leaf per perspective + one for the final decision (best-effort)
     try {
       const brain = await evalStore.getBrainByName('delphi').catch(() => null)
       if (brain && state.taskId) {
@@ -632,6 +665,30 @@ export class ReviewStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
             /* best-effort */
           })
         }
+        // Persist final decision outcome against Review Decision Rubric
+        const finalOutcomeVerdict: 'approve' | 'reject' | 'needs_human' =
+          reviewDecision.outcome === 'approved'
+            ? 'approve'
+            : reviewDecision.outcome === 'rejected'
+              ? 'reject'
+              : 'needs_human'
+        await persistEvaluation(evalStore, evalBrainId, {
+          rubricId: reviewDeciderRubricId,
+          targetLeafId: state.taskId,
+          perspective: 'review-decision',
+          scores: [
+            {
+              criterionId: 'weighted-approval',
+              score: reviewDecision.score,
+              rationale: `Weighted approval ${reviewDecision.score.toFixed(2)} ${finalOutcomeVerdict === 'approve' ? `≥ ${approveThreshold}` : finalOutcomeVerdict === 'reject' ? `≤ ${rejectThreshold}` : `is inconclusive — escalating to a human.`}`,
+            },
+          ],
+          finalScore: reviewDecision.score,
+          verdict: finalOutcomeVerdict,
+          rationale: reviewDecision.reasons.join('; '),
+        }).catch(() => {
+          /* best-effort */
+        })
       }
     } finally {
       await evalDb.close()

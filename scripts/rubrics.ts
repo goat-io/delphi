@@ -236,6 +236,27 @@ const STANDING_RUBRICS: Array<{ title: string; content: RubricContent }> = [
       ],
     },
   },
+  {
+    title: 'Review Decision Rubric',
+    content: {
+      criteria: [
+        {
+          id: 'weighted-approval',
+          name: 'Weighted perspective approval',
+          description:
+            'Aggregate weighted score across all perspective verdicts must meet the quality gate',
+          weight: 1.0,
+          scoringRange: { min: 0, max: 1 },
+        },
+      ],
+      scoringMethod: 'WEIGHTED',
+      qualityGate: 0.7,
+      rejectGate: 0.3,
+      derivedFrom: [
+        'DISPUTED_TASK: leaf_cc25cc4fe36e436a8de6f04c — review gate must read RUBRIC thresholds + persist EVALUATION',
+      ],
+    },
+  },
 ]
 
 // ── seedRubrics ───────────────────────────────────────────────────────────────

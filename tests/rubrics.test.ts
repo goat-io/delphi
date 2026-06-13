@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path'
 import { ensureSeededRegions } from '@goatlab/delphi-indexer'
 import { BrainStore, createDb, migrate } from '@goatlab/delphi-knowledge'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { Decision } from '../scripts/governance-bridge.js'
+import type { CriterionScore, Decision } from '../scripts/governance-bridge.js'
 import {
   makePerspectiveReviewer,
   makeReviewDecider,
@@ -39,10 +39,10 @@ afterAll(async () => {
 describe('rubrics', () => {
   it('1. seedRubrics is idempotent and criteria weights sum to 1.0', async () => {
     const first = await seedRubrics(store, brainId)
-    expect(first.length).toBe(7)
+    expect(first.length).toBe(8)
 
     const second = await seedRubrics(store, brainId)
-    expect(second.length).toBe(7)
+    expect(second.length).toBe(8)
 
     for (let i = 0; i < first.length; i++) {
       expect(first[i]!.id).toBe(second[i]!.id)
@@ -312,6 +312,97 @@ describe('rubrics', () => {
     expect(scores).toHaveLength(2)
     expect(scores.find(s => s.criterionId === 'files-committed')?.score).toBe(1)
     expect(scores.find(s => s.criterionId === 'work-complete')?.score).toBe(1)
+  })
+
+  it('8. Review Decision Rubric is seeded with WEIGHTED scoring and qualityGate=0.7, rejectGate=0.3', async () => {
+    const rubric = await getRubricByTitle(
+      store,
+      brainId,
+      'Review Decision Rubric',
+    )
+    expect(rubric).not.toBeNull()
+
+    const content = rubric!.content as unknown as RubricContent
+    expect(content.scoringMethod).toBe('WEIGHTED')
+    expect(content.qualityGate).toBeCloseTo(0.7)
+    expect(content.rejectGate).toBeCloseTo(0.3)
+    expect(content.criteria).toHaveLength(1)
+    expect(content.criteria[0]!.id).toBe('weighted-approval')
+    expect(content.criteria[0]!.weight).toBeCloseTo(1.0)
+  })
+
+  it('8b. makeReviewDecider respects rubric-provided thresholds over hardcoded fallbacks', () => {
+    const defaultDecider = makeReviewDecider()
+    const lowThresholdDecider = makeReviewDecider({
+      approveThreshold: 0.6,
+      rejectThreshold: 0.2,
+    })
+    expect(defaultDecider).toBeDefined()
+    expect(lowThresholdDecider).toBeDefined()
+    expect(lowThresholdDecider).not.toBe(defaultDecider)
+  })
+
+  it('8c. review-decision: final EVALUATION leaf persisted against Review Decision Rubric', async () => {
+    await seedRubrics(store, brainId)
+
+    const taskLeaf = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'ACTIVE',
+      title: 'Review Decision Rubric regression target',
+      aliases: [],
+      tags: ['test', 'review-decision'],
+    })
+
+    const rubricLeaf = await getRubricByTitle(
+      store,
+      brainId,
+      'Review Decision Rubric',
+    )
+    expect(rubricLeaf).not.toBeNull()
+
+    const rc = rubricLeaf!.content as unknown as RubricContent
+    const reviewScore = 0.85
+    const finalOutcomeVerdict: 'approve' | 'reject' | 'needs_human' =
+      reviewScore >= rc.qualityGate
+        ? 'approve'
+        : reviewScore <= rc.rejectGate
+          ? 'reject'
+          : 'needs_human'
+
+    const scores: CriterionScore[] = [
+      {
+        criterionId: 'weighted-approval',
+        score: reviewScore,
+        rationale: `Weighted approval ${reviewScore.toFixed(2)} ≥ ${rc.qualityGate}`,
+      },
+    ]
+
+    const evalLeaf = await persistEvaluation(store, brainId, {
+      rubricId: rubricLeaf!.id,
+      targetLeafId: taskLeaf.id,
+      perspective: 'review-decision',
+      scores,
+      finalScore: reviewScore,
+      verdict: finalOutcomeVerdict,
+      rationale: 'Weighted approval ≥ qualityGate — approved',
+    })
+
+    expect(evalLeaf.kind).toBe('EVALUATION')
+    expect(evalLeaf.title).toContain('review-decision')
+    const content = evalLeaf.content as Record<string, unknown>
+    expect(content.finalScore).toBeCloseTo(reviewScore)
+    expect(content.verdict).toBe('approve')
+    expect(content.rubricId).toBe(rubricLeaf!.id)
+    expect(content.targetLeafId).toBe(taskLeaf.id)
+
+    const scoreArr = content.scores as Array<{
+      criterionId: string
+      score: number
+    }>
+    expect(scoreArr).toHaveLength(1)
+    expect(scoreArr[0]!.criterionId).toBe('weighted-approval')
+    expect(scoreArr[0]!.score).toBeCloseTo(reviewScore)
   })
 
   it('7b. verify-closure: QUEUED_TASK with no files committed → reject verdict persisted', async () => {

@@ -974,11 +974,15 @@ const STOP_WORDS = new Set([
 
 // Note: thresholds here are fallbacks; rubric-loaded quality/reject gates
 // take precedence in each perspective evaluator when a BrainStore is provided.
-export function makeReviewDecider(): DefaultReviewDecider {
+// Pass opts to override thresholds read from the "Review Decision Rubric" leaf.
+export function makeReviewDecider(opts?: {
+  approveThreshold?: number
+  rejectThreshold?: number
+}): DefaultReviewDecider {
   return new DefaultReviewDecider({
-    approveThreshold: 0.7,
+    approveThreshold: opts?.approveThreshold ?? 0.7,
     escalateOnReject: false,
-    rejectThreshold: 0.3,
+    rejectThreshold: opts?.rejectThreshold ?? 0.3,
   })
 }
 
