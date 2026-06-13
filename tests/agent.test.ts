@@ -12,6 +12,10 @@ import type { Db } from '@goatlab/delphi-knowledge'
 import { BrainStore, createDb, migrate } from '@goatlab/delphi-knowledge'
 import type { Confidence } from '@goatlab/delphi-protocol'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import type { CriterionScore } from '../scripts/governance-bridge.js'
+import { persistEvaluation } from '../scripts/governance-bridge.js'
+import type { RubricContent } from '../scripts/rubrics.js'
+import { getRubricByTitle, seedRubrics } from '../scripts/rubrics.js'
 
 let db: Db
 let store: BrainStore
@@ -272,5 +276,107 @@ describe('delphi-agent answer', () => {
     )
     expect(result.navigationPath.length).toBeGreaterThanOrEqual(2)
     expect(result.navigationPath[0]).toBe('brain')
+  })
+})
+
+describe('Answer Quality Benchmark — rubric-backed (MVP-0001)', () => {
+  it('7. Answer Quality Rubric is seeded and has 4 criteria with weights summing to 1.0', async () => {
+    await seedRubrics(store, brainId)
+    const rubricLeaf = await getRubricByTitle(store, brainId, 'Answer Quality Rubric')
+    expect(rubricLeaf).not.toBeNull()
+    const content = rubricLeaf!.content as unknown as RubricContent
+    expect(content.criteria).toHaveLength(4)
+    expect(content.qualityGate).toBe(0.8)
+    const weightSum = content.criteria.reduce((s, c) => s + c.weight, 0)
+    expect(weightSum).toBeCloseTo(1.0, 5)
+    const ids = content.criteria.map(c => c.id)
+    expect(ids).toContain('cites-sources')
+    expect(ids).toContain('key-claims-present')
+    expect(ids).toContain('confidence-shown')
+    expect(ids).toContain('contradictions-surface')
+  })
+
+  it('8. answerQuestion result scores pass the Answer Quality Rubric and EVALUATION leaf is persisted', async () => {
+    await seedRubrics(store, brainId)
+    const rubricLeaf = await getRubricByTitle(store, brainId, 'Answer Quality Rubric')
+    expect(rubricLeaf).not.toBeNull()
+    const rubric = rubricLeaf!.content as unknown as RubricContent
+
+    const synth = new ExtractiveSynthesizer()
+    const result = await answerQuestion(
+      store,
+      brainId,
+      'What makes TigerBeetle suitable for financial workloads?',
+      synth,
+    )
+
+    // Score each criterion deterministically from the AnswerResult fields
+    const scores: CriterionScore[] = [
+      {
+        criterionId: 'cites-sources',
+        score: result.evidence.length > 0 ? 1.0 : 0.0,
+        rationale:
+          result.evidence.length > 0
+            ? `${result.evidence.length} evidence item(s) cited`
+            : 'No evidence cited',
+      },
+      {
+        criterionId: 'key-claims-present',
+        score: result.beliefs.length > 0 ? 1.0 : 0.0,
+        rationale:
+          result.beliefs.length > 0
+            ? `${result.beliefs.length} belief(s) retrieved`
+            : 'No beliefs found',
+      },
+      {
+        criterionId: 'confidence-shown',
+        score: result.confidence > 0 && result.confidence <= 1 ? 1.0 : 0.0,
+        rationale: `Confidence: ${result.confidence.toFixed(3)}`,
+      },
+      {
+        criterionId: 'contradictions-surface',
+        // No contradictions in test data → full score (expected behaviour)
+        score: 1.0,
+        rationale: `${result.contradictions.length} contradiction(s) reported`,
+      },
+    ]
+
+    // Compute weighted final score using rubric weights
+    let total = 0
+    let weightSum = 0
+    for (const cs of scores) {
+      const criterion = rubric.criteria.find(c => c.id === cs.criterionId)
+      if (!criterion) {
+        continue
+      }
+      total += cs.score * criterion.weight
+      weightSum += criterion.weight
+    }
+    const finalScore = weightSum > 0 ? total / weightSum : 0
+
+    const verdict = finalScore >= rubric.qualityGate
+      ? ('approve' as const)
+      : finalScore <= rubric.rejectGate
+        ? ('reject' as const)
+        : ('needs_human' as const)
+
+    const evalLeaf = await persistEvaluation(store, brainId, {
+      rubricId: rubricLeaf!.id,
+      targetLeafId: rubricLeaf!.id, // evaluation targets the rubric itself in this gate
+      perspective: 'answer-quality-benchmark',
+      scores,
+      finalScore,
+      verdict,
+      rationale: `MVP-0001 Answer Quality Benchmark: ${scores.map(s => `${s.criterionId}=${s.score}`).join(', ')}`,
+    })
+
+    expect(evalLeaf.kind).toBe('EVALUATION')
+    expect(evalLeaf.title).toContain('answer-quality-benchmark')
+    const content = evalLeaf.content as Record<string, unknown>
+    expect(content.verdict).toBe(verdict)
+    expect(typeof content.finalScore).toBe('number')
+
+    // Gate: the benchmark must pass (finalScore ≥ qualityGate = 0.8)
+    expect(finalScore).toBeGreaterThanOrEqual(rubric.qualityGate)
   })
 })

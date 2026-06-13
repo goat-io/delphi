@@ -138,6 +138,45 @@ const STANDING_RUBRICS: Array<{ title: string; content: RubricContent }> = [
       derivedFrom: ['RFC-0005'],
     },
   },
+  {
+    title: 'Answer Quality Rubric',
+    content: {
+      criteria: [
+        {
+          id: 'cites-sources',
+          name: 'Cites correct sources',
+          description: 'Answer evidence list is non-empty and references source assets',
+          weight: 0.25,
+          scoringRange: { min: 0, max: 1 },
+        },
+        {
+          id: 'key-claims-present',
+          name: 'Key claims present',
+          description: 'Answer summary contains the key claims expected from the domain knowledge',
+          weight: 0.25,
+          scoringRange: { min: 0, max: 1 },
+        },
+        {
+          id: 'confidence-shown',
+          name: 'Confidence shown and plausible',
+          description: 'Answer confidence value is set and in range (0, 1]',
+          weight: 0.25,
+          scoringRange: { min: 0, max: 1 },
+        },
+        {
+          id: 'contradictions-surface',
+          name: 'Contradictions surface',
+          description: 'Known contradictions are reported when present in the knowledge base',
+          weight: 0.25,
+          scoringRange: { min: 0, max: 1 },
+        },
+      ],
+      scoringMethod: 'WEIGHTED',
+      qualityGate: 0.8,
+      rejectGate: 0.4,
+      derivedFrom: ['DELPHI-MVP-0001 §Answer-Quality-Benchmark', 'RFC-0005'],
+    },
+  },
 ]
 
 // ── seedRubrics ───────────────────────────────────────────────────────────────
