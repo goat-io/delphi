@@ -85,40 +85,48 @@ export default function App() {
   const cycles = snapshot?.cycles ?? []
   const live = snapshot?.live ?? {}
   const agents = snapshot?.agents ?? []
-  const workingFiles = snapshot?.workingFiles ?? []
 
   return (
     <div style={{ minHeight: '100vh', background: '#0b0e14' }}>
       <Header live={live} />
-      <EvolutionLoop live={live} />
 
       <main style={{
         maxWidth: isMobile ? '100%' : '1400px',
         margin: '0 auto',
         overflowX: 'hidden',
       }}>
-        <LiveActivity agents={agents} workingFiles={workingFiles} live={live} state={state} />
-        <BrainGrowth health={state?.health} cycles={cycles} />
+        {/* The whole story: what we're achieving + the parallel missions. */}
+        <Missions state={state} agents={agents} live={live} />
 
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
-          gap: 0,
-        }}>
-          <div style={{ borderRight: isMobile ? 'none' : '1px solid #1e2430' }}>
-            <RegionCoverage
-              coverage={state?.coverage}
-              regions={state?.regions}
-              coverageTarget={state?.coverageTarget}
-            />
-          </div>
-          <div>
-            <Goals goals={state?.goals} />
-          </div>
+        {/* Everything below is the machinery — hidden by default. */}
+        <div style={{ padding: isMobile ? '14px 16px' : '16px 28px' }}>
+          <button
+            type="button"
+            onClick={() => setShowDetails(s => !s)}
+            style={{
+              background: 'transparent',
+              border: '1px solid #1e2430',
+              borderRadius: '8px',
+              color: '#7f8aa3',
+              fontSize: '12px',
+              padding: '8px 14px',
+              minHeight: '36px',
+              cursor: 'pointer',
+            }}
+          >
+            {showDetails ? '▾ Hide the machinery' : '▸ Show the machinery (loop, metrics, history)'}
+          </button>
         </div>
 
-        <CycleFeed cycles={cycles} />
-        <KnowledgeGraph />
+        {showDetails && (
+          <>
+            <EvolutionLoop live={live} />
+            <BrainGrowth health={state?.health} cycles={cycles} />
+            <Goals goals={state?.goals} />
+            <CycleFeed cycles={cycles} />
+            <KnowledgeGraph />
+          </>
+        )}
       </main>
 
       {/* Footer */}
