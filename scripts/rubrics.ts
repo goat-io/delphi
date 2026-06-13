@@ -415,6 +415,35 @@ const STANDING_RUBRICS: Array<{ title: string; content: RubricContent }> = [
     },
   },
   {
+    title: 'Region Coverage Rubric',
+    content: {
+      criteria: [
+        {
+          id: 'coverage-improved',
+          name: 'Coverage improved',
+          description:
+            'The region coverage score increased after the agent work, or the region now meets the coverage target',
+          weight: 0.6,
+          scoringRange: { min: 0, max: 1 },
+        },
+        {
+          id: 'artifact-committed',
+          name: 'Artifact committed',
+          description:
+            'At least one file was committed under docs/ or research/ as evidence-backed knowledge for the region',
+          weight: 0.4,
+          scoringRange: { min: 0, max: 1 },
+        },
+      ],
+      scoringMethod: 'WEIGHTED',
+      qualityGate: 0.6,
+      rejectGate: 0.0,
+      derivedFrom: [
+        'COVERAGE_GAP trigger: region coverage score below target (0.75)',
+      ],
+    },
+  },
+  {
     title: 'Disputed Cycle Rubric',
     content: {
       criteria: [

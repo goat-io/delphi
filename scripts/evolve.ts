@@ -5,6 +5,7 @@ import { ensureSeededRegions } from '@goatlab/delphi-indexer'
 import { BrainStore, createDb, migrate } from '@goatlab/delphi-knowledge'
 import type { Leaf } from '@goatlab/delphi-protocol'
 import { nowIso } from '@goatlab/delphi-protocol'
+import { assessCoverage, COVERAGE_TARGET } from './coverage.js'
 import { evaluateGoals, seedGoals } from './goals.js'
 import { persistEvaluation } from './governance-bridge.js'
 import { emitDefectTasks, scanLoopAnomalies } from './introspect.js'
@@ -20,6 +21,7 @@ export type DebtTrigger =
   | 'SPEC_GAP'
   | 'OPEN_QUESTION'
   | 'GOAL_GAP'
+  | 'COVERAGE_GAP'
   | 'QUEUED_TASK'
 
 export interface DebtItem {
@@ -48,6 +50,8 @@ function closureFor(trigger: DebtTrigger): string {
       return 'question answered with ≥1 evidence-backed belief'
     case 'GOAL_GAP':
       return 'goal metric meets target on re-evaluation'
+    case 'COVERAGE_GAP':
+      return 'region coverage score increased toward the target (more evidence-backed beliefs and/or answered questions)'
     case 'QUEUED_TASK':
       return 'the named gate reads from a RUBRIC leaf and persists EVALUATION leaves'
   }
@@ -341,12 +345,32 @@ export async function scanDebt(
     if (content.metric === 'emptySeededRegions' && hasEmptyRegionItems) {
       continue
     }
+    // Suppress "All regions meet coverage target" GOAL_GAP when COVERAGE_GAP items will be
+    // emitted below — they already represent that work more specifically.
+    if (content.metric === 'underCoveredRegions') {
+      continue
+    }
     items.push({
       trigger: 'GOAL_GAP',
       target: gr.goal.id,
       targetTitle: gr.goal.title,
       detail: `goal unmet: ${gr.goal.title} (current ${gr.current}, target ${content.comparator} ${gr.target})`,
       priority: 90,
+    })
+  }
+
+  // COVERAGE_GAP (priority 85): regions with coverage score < COVERAGE_TARGET
+  const coverageResults = await assessCoverage(store, brainId)
+  for (const rc of coverageResults) {
+    if (rc.score >= COVERAGE_TARGET) {
+      continue
+    }
+    items.push({
+      trigger: 'COVERAGE_GAP',
+      target: rc.regionId,
+      targetTitle: rc.regionTitle,
+      detail: `region '${rc.regionTitle}' coverage ${rc.score.toFixed(2)} < ${COVERAGE_TARGET} — gaps: ${rc.gaps.join(', ')}`,
+      priority: 85,
     })
   }
 
@@ -614,6 +638,10 @@ Do NOT write empty files or placeholder content. Every file must contain real kn
 After acting, re-run \`pnpm brain:bootstrap\` to update indexes.`
       break
     }
+
+    case 'COVERAGE_GAP':
+      body = `The knowledge region '${item.targetTitle}' of this repo's Brain is under-covered (${item.detail}). DEEPEN it toward structured understanding — do NOT invent content. Read the relevant rfcs/ and source for this region's topic, then write docs/ or research/ markdown (factual, declarative, YAML frontmatter) that adds genuine evidence-backed knowledge to this region: define its key concepts, state load-bearing beliefs with citations to specific RFC files/sections or source files, and answer the region's real open questions. Ensure scripts/bootstrap-brain.ts ingests the file into the right region (follow existing source-list structure). Same hard rules; gate must pass; end with WORK COMPLETE.`
+      break
 
     case 'QUEUED_TASK': {
       const taskContent = (task.content ?? {}) as Record<string, unknown>

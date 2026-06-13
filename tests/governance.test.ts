@@ -39,13 +39,13 @@ afterAll(async () => {
 })
 
 describe('governance bridge', () => {
-  it('1. seedGoals: creates 5 goal leaves idempotently in Objectives region', async () => {
+  it('1. seedGoals: creates 6 goal leaves idempotently in Objectives region', async () => {
     const first = await seedGoals(store, brainId)
-    expect(first.length).toBe(5)
+    expect(first.length).toBe(6)
 
     // Second call must not create duplicates
     const second = await seedGoals(store, brainId)
-    expect(second.length).toBe(5)
+    expect(second.length).toBe(6)
 
     // Titles should match
     const titles = second.map(l => l.title)

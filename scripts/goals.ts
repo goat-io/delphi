@@ -4,6 +4,7 @@
 import { ensureSeededRegions } from '@goatlab/delphi-indexer'
 import { BrainStore } from '@goatlab/delphi-knowledge'
 import type { Leaf } from '@goatlab/delphi-protocol'
+import { assessCoverage, COVERAGE_TARGET } from './coverage.js'
 
 // ── Goal shape (stored as OBJECT leaves with tag "goal") ─────────────────────
 
@@ -45,6 +46,10 @@ const STANDING_GOALS: Array<{
   {
     title: 'Average confidence above 0.5',
     content: { metric: 'avgConfidence', target: 0.5, comparator: '>=' },
+  },
+  {
+    title: 'All regions meet coverage target',
+    content: { metric: 'underCoveredRegions', target: 0, comparator: '==' },
   },
   // NOTE: "No unattended loop anomalies" was removed — it was a circular goal.
   // Its metric counts the maintenance tasks, but satisfying it requires CLOSING
@@ -104,7 +109,7 @@ export async function evaluateGoals(
   store: BrainStore,
   brainId: string,
 ): Promise<GoalResult[]> {
-  const [goals, regions, leaves, health] = await Promise.all([
+  const [goals, regions, leaves, health, coverageResults] = await Promise.all([
     store
       .listLeaves(brainId)
       .then(ls =>
@@ -113,6 +118,7 @@ export async function evaluateGoals(
     store.listRegions(brainId),
     store.listLeaves(brainId),
     store.health(brainId),
+    assessCoverage(store, brainId),
   ])
 
   // Compute emptySeededRegions
@@ -121,6 +127,11 @@ export async function evaluateGoals(
     const count = leaves.filter(l => l.regionId === r.id).length
     return count === 0
   }).length
+
+  // Compute underCoveredRegions
+  const underCoveredRegions = coverageResults.filter(
+    r => r.score < COVERAGE_TARGET,
+  ).length
 
   function currentFor(metric: string): number {
     switch (metric) {
@@ -134,6 +145,8 @@ export async function evaluateGoals(
         return health.openQuestions
       case 'avgConfidence':
         return health.avgConfidence ?? 0
+      case 'underCoveredRegions':
+        return underCoveredRegions
       default:
         return 0
     }

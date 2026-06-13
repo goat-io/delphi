@@ -19,6 +19,7 @@ import type { StepExecutionContext } from '@goatlab/delphi-core'
 import { FunctionStep, step, Workflow } from '@goatlab/delphi-core'
 import type { Decision } from '@goatlab/delphi-governance'
 import { BrainStore, createDb, migrate } from '@goatlab/delphi-knowledge'
+import { assessCoverage } from './coverage.js'
 import {
   appendCycleLog,
   gateGreen,
@@ -95,6 +96,8 @@ export interface CycleState {
   // Written by verify-closure
   closureStatus?: string
   healthAfterStr?: string
+  // Written by create-task: coverage score for COVERAGE_GAP closure comparison
+  coverageBefore?: number
 }
 
 export type TriggerJsonObject = { [x: string]: any } & CycleTrigger
@@ -332,11 +335,27 @@ export class PrepareStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
         },
         task,
       )
+
+      // Capture coverage score before agent runs (for COVERAGE_GAP closure comparison)
+      let coverageBefore: number | undefined
+      if (state.trigger === 'COVERAGE_GAP' && state.target) {
+        try {
+          const coverageResults = await assessCoverage(store, brainId)
+          const regionResult = coverageResults.find(
+            r => r.regionId === state.target,
+          )
+          coverageBefore = regionResult?.score
+        } catch {
+          // non-fatal
+        }
+      }
+
       writeState(cwd, runId, {
         snapshotLines: gitPorcelain(cwd),
         preCommitHash: gitShortHash(cwd),
         prompt,
         healthBeforeStr: healthStr(healthBefore),
+        ...(coverageBefore !== undefined ? { coverageBefore } : {}),
       })
       console.log(
         `[create-task] pid=${process.pid} Task: ${state.taskId} — ${state.taskTitle}`,
@@ -1325,12 +1344,100 @@ export class VerifyClosureStep extends FunctionStep<
         }
       }
 
+      // COVERAGE_GAP closure: coverage improved OR new files committed under docs/research/
+      // AND WORK COMPLETE present. Keep lenient.
+      let coverageGapDone = false
+      if (state.trigger === 'COVERAGE_GAP' && state.target) {
+        const addedFiles = gitAddedFiles(
+          cwd,
+          state.preCommitHash!,
+          state.commitHash!,
+        )
+        const artifactCommitted = addedFiles.some(
+          f => f.startsWith('docs/') || f.startsWith('research/'),
+        )
+        const workComplete = state.hasWorkComplete ?? false
+
+        // Check if coverage improved
+        let coverageImproved = false
+        try {
+          const coverageAfter = await assessCoverage(store, brainId)
+          const regionAfter = coverageAfter.find(
+            r => r.regionId === state.target,
+          )
+          if (
+            regionAfter !== undefined &&
+            state.coverageBefore !== undefined &&
+            regionAfter.score > state.coverageBefore
+          ) {
+            coverageImproved = true
+          }
+          // Also close if region now meets the target
+          if (regionAfter !== undefined) {
+            const { COVERAGE_TARGET: target } = await import('./coverage.js')
+            if (regionAfter.score >= target) {
+              coverageImproved = true
+            }
+          }
+        } catch {
+          // non-fatal
+        }
+
+        coverageGapDone =
+          (coverageImproved || artifactCommitted) && workComplete
+
+        // Persist EVALUATION leaf against "Region Coverage Rubric" (best-effort)
+        try {
+          const coverageRubric = await getRubricByTitle(
+            store,
+            brainId,
+            'Region Coverage Rubric',
+          )
+          if (coverageRubric && state.taskId) {
+            const coverageScore = coverageImproved ? 1 : 0
+            const artifactScore = artifactCommitted ? 1 : 0
+            const coverageFinalScore = 0.6 * coverageScore + 0.4 * artifactScore
+            await persistEvaluation(store, brainId, {
+              rubricId: coverageRubric.id,
+              targetLeafId: state.taskId,
+              perspective: 'coverage-gap-closure',
+              scores: [
+                {
+                  criterionId: 'coverage-improved',
+                  score: coverageScore,
+                  rationale: coverageImproved
+                    ? 'Region coverage score increased or met target after agent work'
+                    : `Coverage did not improve (before=${state.coverageBefore?.toFixed(2) ?? 'unknown'})`,
+                },
+                {
+                  criterionId: 'artifact-committed',
+                  score: artifactScore,
+                  rationale: artifactCommitted
+                    ? `Artifact(s) committed under docs/ or research/: ${addedFiles.filter(f => f.startsWith('docs/') || f.startsWith('research/')).join(', ')}`
+                    : 'No artifact committed under docs/ or research/ in this cycle',
+                },
+              ],
+              finalScore: coverageFinalScore,
+              verdict: coverageGapDone ? 'approve' : 'reject',
+              rationale: coverageGapDone
+                ? `COVERAGE_GAP closure verified: improved=${coverageImproved} artifact=${artifactCommitted} workComplete=${workComplete}`
+                : `COVERAGE_GAP closure UNVERIFIED: improved=${coverageImproved} artifact=${artifactCommitted} workComplete=${workComplete}`,
+            }).catch(() => {
+              /* best-effort */
+            })
+          }
+        } catch {
+          // non-fatal
+        }
+      }
+
       const closureMet =
         !stillPresent ||
         researchAdded ||
         rfcAdded ||
         queuedTaskDone ||
-        specResearchAdded
+        specResearchAdded ||
+        coverageGapDone
 
       // OPEN_QUESTION closure: reads "Open Question Closure Rubric" + persists EVALUATION.
       // Covers three cases: research file newly added, modified, or pre-existing with WORK COMPLETE.
