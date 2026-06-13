@@ -454,3 +454,4 @@ Automatically maintained by `pnpm evolve:loop`.
 | Closure | CLOSED |
 | Health before | leaves=1293 beliefs=687 evidence=2354 openQ=99 |
 | Health after | leaves=1294 beliefs=687 evidence=2354 openQ=99 |
+<!-- daemon 2026-06-13T18:44:19.029Z daemon starting interval=1min maxPerDay=12 executor=headless -->
