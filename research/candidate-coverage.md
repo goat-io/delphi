@@ -2,15 +2,17 @@
 name: candidate-coverage
 type: coverage-note
 spec_gap: "Candidate"
-covered_by: RFC-0027-Extraction-and-Entity-Resolution
+covered_by:
+  - RFC-0027-Extraction-and-Entity-Resolution
+  - RFC-0031-Candidate-Staging-Protocol
 ---
 
-The `Candidate` primitive is fully specified in RFC-0027 (Extraction and Entity Resolution), section "# Candidates" (lines ~74–130).
+The `Candidate` primitive is fully specified across two complementary RFCs.
 
-RFC-0027 defines a Candidate as a proposed, non-canonical leaf created by the extraction pipeline; it carries a typed subject, predicate, object, confidence, and a passage-level EvidenceRef, and is therefore distinct from a committed Leaf.
+RFC-0027 (Extraction and Entity Resolution) defines what a Candidate is: a proposed, non-canonical leaf produced by the extraction pipeline, carrying a typed subject, predicate, object, confidence score, and a passage-level EvidenceRef. It covers the extraction → normalisation → resolution pipeline and the three resolution outcomes (SKIP / MERGE / NEW).
 
-The RFC specifies the full lifecycle: extraction → normalisation (one claim per candidate, resolvable subject) → three-stage resolution (SKIP / MERGE / NEW) → retirement with a back-pointer once the candidate is absorbed or rejected.
+RFC-0031 (Candidate Staging Protocol) extends RFC-0027 with the Candidate's persistent lifecycle: a seven-state machine (PENDING → NORMALIZING → RESOLVING → PROMOTED / REJECTED / FLAGGED / EXPIRED), TTL semantics per state, the HITL review queue for FLAGGED candidates (Approve / Reject / Defer with a three-deferral cap), storage contract (dedicated staging table, immutable stateHistory, required indexes), batch back-pressure limits, and the audit trail required for provenance traceability.
 
-It also covers Candidate-specific constraints: every BELIEF candidate must carry an EvidenceRef, FLAGGED candidates are routed to a human review queue, and merge outcomes propagate confidence updates to the target Leaf.
+RFC-9999 references RFC-0031 in the reading-order phase and dependency graph.
 
-No additional RFC is required; the gap is closed by RFC-0027.
+No additional RFC is required; the gap is fully closed by RFC-0027 and RFC-0031.
