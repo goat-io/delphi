@@ -111,10 +111,14 @@ describe('introspect harness', () => {
     await store.updateLeaf(evalLeaf.id, { status: 'ARCHIVED' })
   })
 
-  it('3. Log parsing: RED gate → ROLLBACK; no-work marker → EMPTY_CYCLE', async () => {
-    // Cycle 1: SKIPPED gate only (no no-work summary) → 1 EMPTY_CYCLE
-    // Cycle 2: RED gate only → 1 ROLLBACK
-    // Total log-sourced: exactly 2
+  it('3. Log parsing: single RED or SKIPPED cycle → no anomaly; two RED cycles same taskId → exactly one GATE_RED_TWICE', async () => {
+    // Single-occurrence anomalies (ROLLBACK, EMPTY_CYCLE, DISPUTED_TASK per cycle) are no
+    // longer emitted — their unique-timestamp signatures never deduped and fed a churn loop.
+    // The ONLY log signal is GATE_RED_TWICE: taskId-keyed, deduped, genuine "stuck" indicator.
+    //
+    // Cycle 1: SKIPPED gate → NO anomaly (single occurrence)
+    // Cycle 2: RED gate for leaf_def456 → NO anomaly alone (single occurrence)
+    // Cycle 3: RED gate again for leaf_def456 → triggers GATE_RED_TWICE for leaf_def456
     const fixtureLog = `# Evolution Log
 
 ## Cycle 1 — 2026-01-01T10:00:00.000Z
@@ -138,6 +142,17 @@ describe('introspect harness', () => {
 | Gate | RED |
 | Commit | n/a |
 | Closure | OPEN |
+
+## Cycle 3 — 2026-01-01T12:00:00.000Z
+
+| Field | Value |
+|-------|-------|
+| Task | leaf_def456 — [SPEC_GAP] Some Gap |
+| Trigger | SPEC_GAP |
+| Agent summary | Tried again, still failing. |
+| Gate | RED |
+| Commit | n/a |
+| Closure | OPEN |
 `
 
     const tmpDir = await mkdtemp(join(tmpdir(), 'delphi-log-fixture-'))
@@ -153,15 +168,22 @@ describe('introspect harness', () => {
       a.evidence.startsWith('evolution.log.md'),
     )
 
-    // Expect at least one ROLLBACK (RED gate) and one EMPTY_CYCLE (SKIPPED gate)
+    // The SKIPPED cycle and the first RED cycle must produce NO anomaly (single occurrences)
     const rollback = logAnomalies.find(a => a.kind === 'ROLLBACK')
     const emptyCycle = logAnomalies.find(a => a.kind === 'EMPTY_CYCLE')
+    expect(rollback).toBeUndefined()
+    expect(emptyCycle).toBeUndefined()
 
-    expect(rollback).toBeDefined()
-    expect(emptyCycle).toBeDefined()
+    // Two RED cycles for the same taskId → exactly one GATE_RED_TWICE
+    const gateRedTwice = logAnomalies.find(
+      a =>
+        a.kind === 'GATE_RED_TWICE' &&
+        a.signature === 'log:leaf_def456:GATE_RED_TWICE',
+    )
+    expect(gateRedTwice).toBeDefined()
 
-    // Exactly 2: cycle 1 SKIPPED → EMPTY_CYCLE (sig: log:ts1:GATE_RED); cycle 2 RED → ROLLBACK (sig: log:ts2:GATE_RED)
-    expect(logAnomalies.length).toBe(2)
+    // No other log-sourced anomalies
+    expect(logAnomalies.length).toBe(1)
   })
 
   it('4. Cap test: seeding >5 anomalies emits at most 5 ACTIVE auto-detected tasks', async () => {
@@ -368,9 +390,14 @@ describe('introspect harness', () => {
     await store.updateLeaf(infraTask.id, { status: 'ARCHIVED' })
   })
 
-  it('10. Log with terminal-reject Dispute row → no ROLLBACK/DISPUTED_TASK; normal RED gate → still yields ROLLBACK', async () => {
-    // Cycle A: DISPUTED gate + "| Dispute | terminal-reject |" → must NOT produce ROLLBACK/DISPUTED_TASK
-    // Cycle B: RED gate without terminal-reject → must produce ROLLBACK
+  it('10. Log: terminal-reject cycle → skipped entirely; single RED cycle → no anomaly; two RED cycles same taskId → GATE_RED_TWICE', async () => {
+    // Terminal-reject cycles are still skipped (correct refusals must not pollute anomalies).
+    // Single-occurrence RED cycles no longer emit ROLLBACK (churn fix).
+    // Two RED cycles for the same non-terminal taskId → exactly one GATE_RED_TWICE.
+    //
+    // Cycle A: DISPUTED + terminal-reject → skipped by terminal-reject guard (no anomaly)
+    // Cycle B: single RED for leaf_infra002 → no anomaly alone
+    // Cycle C: second RED for leaf_infra002 → GATE_RED_TWICE for leaf_infra002
     const fixtureLog = `# Evolution Log
 
 ## Cycle 10 — 2026-02-01T10:00:00.000Z
@@ -395,6 +422,17 @@ describe('introspect harness', () => {
 | Gate | RED |
 | Commit | n/a |
 | Closure | OPEN |
+
+## Cycle 12 — 2026-02-01T12:00:00.000Z
+
+| Field | Value |
+|-------|-------|
+| Task | leaf_infra002 — [QUEUED_TASK] Fix types |
+| Trigger | QUEUED_TASK |
+| Agent summary | Second attempt, still failing. |
+| Gate | RED |
+| Commit | n/a |
+| Closure | OPEN |
 `
 
     const tmpDir = await mkdtemp(join(tmpdir(), 'delphi-terminal-log-'))
@@ -409,19 +447,26 @@ describe('introspect harness', () => {
       a.evidence.startsWith('evolution.log.md'),
     )
 
-    // Cycle 10 (terminal-reject) must produce zero anomalies
+    // terminal-reject cycle (Cycle 10) must produce zero anomalies
     const terminalAnomalies = logAnomalies.filter(a =>
       a.evidence.includes('2026-02-01T10:00:00.000Z'),
     )
     expect(terminalAnomalies.length).toBe(0)
 
-    // Cycle 11 (plain RED) must still produce a ROLLBACK
-    const rollback = logAnomalies.find(
+    // Single RED (Cycle 11) must NOT produce a ROLLBACK
+    const rollback = logAnomalies.find(a => a.kind === 'ROLLBACK')
+    expect(rollback).toBeUndefined()
+
+    // Two RED cycles for leaf_infra002 → exactly one GATE_RED_TWICE
+    const gateRedTwice = logAnomalies.find(
       a =>
-        a.kind === 'ROLLBACK' &&
-        a.evidence.includes('2026-02-01T11:00:00.000Z'),
+        a.kind === 'GATE_RED_TWICE' &&
+        a.signature === 'log:leaf_infra002:GATE_RED_TWICE',
     )
-    expect(rollback).toBeDefined()
+    expect(gateRedTwice).toBeDefined()
+
+    // Exactly one log anomaly total
+    expect(logAnomalies.length).toBe(1)
   })
 
   it('5. No circular loopAnomalies goal — anomaly count is a health metric, not a competing goal', async () => {

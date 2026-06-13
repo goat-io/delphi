@@ -180,14 +180,6 @@ export async function scanLoopAnomalies(
       const gateMatch = block.match(/\|\s*Gate\s*\|\s*(\S+)\s*\|/)
       const gateResult = gateMatch ? gateMatch[1]!.trim() : ''
 
-      // Extract closure result
-      const closureMatch = block.match(/\|\s*Closure\s*\|\s*(\S+)\s*\|/)
-      const closureResult = closureMatch ? closureMatch[1]!.trim() : ''
-
-      // Extract agent summary line
-      const summaryMatch = block.match(/\|\s*Agent summary\s*\|\s*(.+?)\s*\|/)
-      const agentSummary = summaryMatch ? summaryMatch[1]!.trim() : ''
-
       // Check if this cycle was a terminal refusal (correct arbiter/review REJECT).
       // Terminal disputes must NOT produce ROLLBACK or DISPUTED_TASK anomalies —
       // re-attempting cannot fix a correct refusal, so routing them to the
@@ -198,45 +190,20 @@ export async function scanLoopAnomalies(
         continue
       }
 
-      if (gateResult === 'RED') {
-        add({
-          signature: `log:${timestamp}:GATE_RED`,
-          kind: 'ROLLBACK',
-          detail: `cycle gate RED at ${timestamp}`,
-          evidence: `evolution.log.md:cycle:${timestamp}`,
-        })
-
-        // Track for GATE_RED_TWICE
-        if (taskId) {
-          const prior = redByTaskId.get(taskId) ?? []
-          prior.push(timestamp)
-          redByTaskId.set(taskId, prior)
-        }
-      } else if (gateResult === 'SKIPPED') {
-        add({
-          signature: `log:${timestamp}:GATE_RED`,
-          kind: 'EMPTY_CYCLE',
-          detail: `cycle gate SKIPPED at ${timestamp}`,
-          evidence: `evolution.log.md:cycle:${timestamp}`,
-        })
-      }
-
-      if (closureResult === 'DISPUTED') {
-        add({
-          signature: `log:${timestamp}:DISPUTED`,
-          kind: 'DISPUTED_TASK',
-          detail: `closure disputed at ${timestamp}`,
-          evidence: `evolution.log.md:cycle:${timestamp}`,
-        })
-      }
-
-      if (agentSummary.includes('no work produced — empty cycle')) {
-        add({
-          signature: `log:${timestamp}:EMPTY_CYCLE`,
-          kind: 'EMPTY_CYCLE',
-          detail: `empty cycle at ${timestamp}`,
-          evidence: `evolution.log.md:cycle:${timestamp}`,
-        })
+      // ROOT FIX: do NOT emit single-occurrence, timestamp-keyed anomalies
+      // (ROLLBACK / DISPUTED_TASK / EMPTY_CYCLE per cycle). Their signatures
+      // carry a unique timestamp, so they can never dedup — and because a
+      // maintenance cycle that disputes writes a NEW disputed cycle to the log,
+      // each one spawned the next: a perpetual-motion churn engine. Disputed
+      // tasks are already captured (bounded, deduped, terminal-reject-aware) by
+      // the brain DISPUTED scan in section 1. The only log signal worth keeping
+      // is GATE_RED_TWICE — taskId-keyed (so it dedups) and a genuine "this task
+      // is stuck, it failed the gate twice" indicator. We still TRACK red gates
+      // per task to compute it; we just don't emit a fresh anomaly per cycle.
+      if (gateResult === 'RED' && taskId) {
+        const prior = redByTaskId.get(taskId) ?? []
+        prior.push(timestamp)
+        redByTaskId.set(taskId, prior)
       }
     }
 
