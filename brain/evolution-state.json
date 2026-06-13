@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-06-13T19:36:52.748Z",
+  "generatedAt": "2026-06-13T19:54:14.716Z",
   "brainId": "brain_8c16f71c024d4c8c999e18b1",
   "health": {
-    "leaves": 1500,
+    "leaves": 1501,
     "beliefs": 829,
     "evidence": 2789,
-    "relationships": 166,
+    "relationships": 167,
     "orphanBeliefs": 0,
     "avgConfidence": 0.5336788432267924,
     "staleIndexes": 0,
@@ -159,7 +159,7 @@
       "id": "region_abacde651502466fb9044433",
       "title": "Objectives",
       "kind": "SEEDED",
-      "leafCount": 135
+      "leafCount": 136
     }
   ]
 }
