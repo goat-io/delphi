@@ -89,6 +89,8 @@ Delphi is a knowledge and evolution substrate — not an agent framework, not AI
 infrastructure. The knowledge model exists to serve the loop; the loop is the
 point.
 
+> **Databases solved persistence. Delphi aims to solve adaptation.**
+
 ---
 
 ## This repository evolves itself
