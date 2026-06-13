@@ -211,6 +211,11 @@ export async function scanDebt(
       if (title.startsWith('---')) {
         continue
       }
+      // Skip leaves neutralized by a prior arbiter/perspective rejection
+      const lc = (leaf.content ?? {}) as Record<string, unknown>
+      if (lc.specGapResolved === true) {
+        continue
+      }
       if (!specGapLeafMap.has(leaf.id)) {
         specGapLeafMap.set(leaf.id, leaf)
       }

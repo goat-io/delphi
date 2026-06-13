@@ -290,6 +290,39 @@ describe('evolve harness', () => {
     expect(noisyItem).toBeUndefined()
   })
 
+  it('6c. SPEC_GAP regression: source leaf with specGapResolved=true is NOT emitted as a SPEC_GAP debt item', async () => {
+    const specRegion = await store.getRegionByTitle(brainId, 'Spec')
+    const specRegionId = specRegion?.id
+
+    // A leaf that would normally trigger SPEC_GAP but has been neutralised by a prior
+    // arbiter/perspective rejection (content.specGapResolved = true).
+    await store.createLeaf({
+      brainId,
+      kind: 'BELIEF',
+      status: 'ACTIVE',
+      title: 'Already-covered spec gap candidate',
+      statement:
+        'Candidate for a future RFC — but the arbiter already ruled this is covered by RFC-0027.',
+      aliases: [],
+      tags: [],
+      regionId: specRegionId,
+      content: {
+        specGapResolved: true,
+        specGapResolvedReason:
+          'Arbiter escalation rejected: already covered by RFC-0027 and RFC-0031',
+      },
+    })
+
+    const debt = await scanDebt(store, brainId)
+    const specGapItems = debt.filter(d => d.trigger === 'SPEC_GAP')
+
+    // The neutralised leaf must NOT appear in SPEC_GAP items
+    const neutralised = specGapItems.find(d =>
+      d.targetTitle.includes('Already-covered spec gap candidate'),
+    )
+    expect(neutralised).toBeUndefined()
+  })
+
   it('7a. QUEUED_TASK: ACTIVE TASK with trigger HUMAN_REQUEST and closureCriteria (no dispatchedAt) surfaces in scanDebt with its priority', async () => {
     const opsRegion = await store.getRegionByTitle(brainId, 'Operations')
     const opsRegionId = opsRegion?.id

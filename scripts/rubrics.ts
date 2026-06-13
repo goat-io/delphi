@@ -355,6 +355,36 @@ const STANDING_RUBRICS: Array<{ title: string; content: RubricContent }> = [
       ],
     },
   },
+  {
+    title: 'SPEC_GAP Neutralization Rubric',
+    content: {
+      criteria: [
+        {
+          id: 'source-neutralized',
+          name: 'Source leaf neutralized',
+          description:
+            'The triggering source leaf was updated with specGapResolved=true so scanDebt skips it on future scans',
+          weight: 0.6,
+          scoringRange: { min: 0, max: 1 },
+        },
+        {
+          id: 'decision-recorded',
+          name: 'Decision leaf recorded',
+          description:
+            'A DECISION leaf was persisted capturing the arbiter or perspective ruling and the source leaf ID',
+          weight: 0.4,
+          scoringRange: { min: 0, max: 1 },
+        },
+      ],
+      scoringMethod: 'WEIGHTED',
+      qualityGate: 0.6,
+      rejectGate: 0.0,
+      derivedFrom: [
+        'RFC-0029 §Lease-Semantics',
+        'QUEUED_TASK: leaf_1240426ff38947d189c8a882 — neutralize arbiter-rejected SPEC_GAP sources so they stop re-dispatching',
+      ],
+    },
+  },
 ]
 
 // ── seedRubrics ───────────────────────────────────────────────────────────────

@@ -149,6 +149,91 @@ async function markTaskDisputed(
           ...extraContent,
         },
       })
+
+      // For terminal SPEC_GAP rejections, neutralize the source leaf so
+      // scanDebt does not re-dispatch it on the next cycle (livelock fix).
+      if (opts?.terminal) {
+        const c = (existing.content ?? {}) as Record<string, unknown>
+        if (c.trigger === 'SPEC_GAP' && typeof c.target === 'string') {
+          const sourceLeafId = c.target
+          const sourceLeaf = await store.getLeaf(sourceLeafId).catch(() => null)
+          if (sourceLeaf) {
+            await store
+              .updateLeaf(sourceLeafId, {
+                content: {
+                  ...((sourceLeaf.content ?? {}) as Record<string, unknown>),
+                  specGapResolved: true,
+                  specGapResolvedReason: reason.slice(0, 200),
+                },
+              })
+              .catch(() => {
+                /* best-effort */
+              })
+          }
+          // Persist a DECISION leaf recording the arbiter ruling so the
+          // closure criteria ("DECISION leaf records the ruling") is met.
+          const decisionLeaf = await store
+            .createLeaf({
+              brainId: existing.brainId,
+              kind: 'DECISION',
+              status: 'ACTIVE',
+              title: `Rejected: ${existing.title}`.slice(0, 120),
+              statement: `SPEC_GAP terminally rejected; source leaf ${sourceLeafId} marked specGapResolved. Reason: ${reason.slice(0, 300)}`,
+              aliases: [],
+              tags: ['spec-gap-resolved'],
+              content: {
+                taskId,
+                sourceLeafId,
+                reason: reason.slice(0, 500),
+                specGapResolved: true,
+              },
+            })
+            .catch(() => null)
+
+          // Persist an EVALUATION leaf against the SPEC_GAP Neutralization Rubric
+          // so the gate satisfies "reads from a RUBRIC leaf and persists EVALUATION leaves".
+          const neutralizationRubric = await getRubricByTitle(
+            store,
+            existing.brainId,
+            'SPEC_GAP Neutralization Rubric',
+          ).catch(() => null)
+          if (neutralizationRubric) {
+            const sourceNeutralized = sourceLeaf != null ? 1 : 0
+            const decisionRecorded = decisionLeaf != null ? 1 : 0
+            await persistEvaluation(store, existing.brainId, {
+              rubricId: neutralizationRubric.id,
+              targetLeafId: taskId,
+              perspective: 'spec-gap-neutralization',
+              scores: [
+                {
+                  criterionId: 'source-neutralized',
+                  score: sourceNeutralized,
+                  rationale:
+                    sourceNeutralized === 1
+                      ? `Source leaf ${sourceLeafId} updated with specGapResolved=true`
+                      : `Source leaf ${sourceLeafId} not found — could not neutralize`,
+                },
+                {
+                  criterionId: 'decision-recorded',
+                  score: decisionRecorded,
+                  rationale:
+                    decisionRecorded === 1
+                      ? `DECISION leaf created: ${decisionLeaf?.id}`
+                      : 'DECISION leaf creation failed',
+                },
+              ],
+              finalScore: 0.6 * sourceNeutralized + 0.4 * decisionRecorded,
+              verdict:
+                sourceNeutralized === 1 && decisionRecorded === 1
+                  ? 'approve'
+                  : 'reject',
+              rationale: `SPEC_GAP source ${sourceLeafId} neutralized=${sourceNeutralized === 1}, decision recorded=${decisionRecorded === 1}. ${reason.slice(0, 200)}`,
+            }).catch(() => {
+              /* best-effort */
+            })
+          }
+        }
+      }
     }
   } finally {
     await db.close()
