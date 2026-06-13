@@ -104,90 +104,123 @@ function StatusTag({ status }) {
   return null
 }
 
-/** Single agent card */
+/** Strip parenthetical content (handles nesting, unlike a regex) so the brief
+ * reads as a plain mission, then tidy whitespace/punctuation artifacts. */
+function cleanTask(task) {
+  if (!task) return null
+  let out = ''
+  let depth = 0
+  for (const ch of task) {
+    if (ch === '(') depth++
+    else if (ch === ')') depth = Math.max(0, depth - 1)
+    else if (depth === 0) out += ch
+  }
+  return out
+    .replace(/\s+([.,;])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
+/** Pull a short human "why" from the brief's metric parenthetical. */
+function gapFromTask(task) {
+  if (!task) return null
+  const m = /\(([^)]*)\)/.exec(task)
+  if (!m) return null
+  const inner = m[1]
+  const bits = []
+  const q = /(\d+)\s+unanswered questions?/i.exec(inner)
+  if (q) bits.push(`${q[1]} open questions`)
+  if (/low confidence/i.test(inner)) bits.push('weak confidence')
+  if (/few beliefs/i.test(inner)) bits.push('few beliefs')
+  if (/sparse evidence/i.test(inner)) bits.push('sparse evidence')
+  if (/(no index|shallow index)/i.test(inner)) bits.push('thin index')
+  return bits.length > 0 ? bits.join(' · ') : null
+}
+
+/** Single agent card — leads with the MISSION, not the metric. */
 function AgentCard({ agent, isMobile }) {
   const color = kindColor(agent.kind)
   const elapsed = formatElapsed(agent.startedSec)
   const ageSec = agent.ageSec != null ? Math.max(0, Math.round(agent.ageSec)) : null
 
+  const aim = cleanTask(agent.task) || agent.objective || '(working)'
+  const why = gapFromTask(agent.task)
   const note = agent.note
-    ? (agent.note.length > 200 ? agent.note.slice(0, 200) + '…' : agent.note)
+    ? agent.note.length > 240
+      ? `${agent.note.slice(0, 240)}…`
+      : agent.note
     : null
 
   return (
     <div style={{
       background: '#11141c',
       border: '1px solid #1e2430',
+      borderLeft: `3px solid ${color}`,
       borderRadius: '10px',
-      padding: '12px 14px',
+      padding: '13px 15px',
       display: 'flex',
       flexDirection: 'column',
-      gap: '6px',
+      gap: '9px',
     }}>
-      {/* Top row: dot + role + objective */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-        <div style={{ paddingTop: '3px' }}>
-          <Dot color={color} />
-        </div>
+      {/* Context row: who + what-kind-of-work + elapsed */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+        <Dot color={color} />
         <RoleChip role={agent.role} />
-        <div style={{ flex: 1, color: '#e6edf3', fontSize: '13px', fontWeight: 600, lineHeight: 1.4 }}>
-          {agent.objective ?? '(working)'}
-        </div>
-        {/* Timing block — right-aligned on desktop; on mobile it wraps below */}
-        {!isMobile && (
-          <div style={{ textAlign: 'right', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            {elapsed && (
-              <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: '11px', color: '#cdd6f4', fontWeight: 600 }}>
-                {elapsed}
-              </span>
-            )}
-            {ageSec != null && (
-              <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: '10px', color: '#3d4559' }}>
-                updated {ageSec}s ago
-              </span>
-            )}
-          </div>
+        {agent.objective && agent.objective !== '(working)' && (
+          <span style={{
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '10px',
+            color: '#7f8aa3',
+            letterSpacing: '0.3px',
+          }}>
+            {agent.objective}
+          </span>
+        )}
+        <span style={{ flex: 1 }} />
+        {elapsed && (
+          <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: '11px', color: '#7f8aa3' }}>
+            {elapsed}{ageSec != null ? ` · ${ageSec}s ago` : ''}
+          </span>
         )}
       </div>
 
-      {/* Timing row below objective on mobile */}
-      {isMobile && (elapsed || ageSec != null) && (
-        <div style={{ display: 'flex', gap: '10px', paddingLeft: '15px', flexWrap: 'wrap' }}>
-          {elapsed && (
-            <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: '11px', color: '#cdd6f4', fontWeight: 600 }}>
-              {elapsed}
-            </span>
-          )}
-          {ageSec != null && (
-            <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: '10px', color: '#3d4559' }}>
-              updated {ageSec}s ago
-            </span>
-          )}
+      {/* THE AIM — what this agent is trying to accomplish, in plain words */}
+      <div style={{ color: '#e6edf3', fontSize: isMobile ? '14px' : '15px', fontWeight: 600, lineHeight: 1.5 }}>
+        {aim}
+      </div>
+
+      {/* WHY — the problem being solved */}
+      {why && (
+        <div style={{ color: '#7f8aa3', fontSize: '12px' }}>
+          <span style={{ color: '#5a6477' }}>why: </span>{why}
         </div>
       )}
 
-      {/* Action line */}
-      {agent.action && (
-        <div style={{ fontFamily: 'ui-monospace, monospace', fontSize: '11px', color: '#7f8aa3', paddingLeft: '15px', wordBreak: 'break-all' }}>
-          <span style={{ color: kindColor(agent.kind), marginRight: '6px' }}>{agent.kind ?? 'working'}</span>
-          {agent.action}
-        </div>
-      )}
-
-      {/* Note — the "what's being discussed" centerpiece */}
-      {note && (
-        <div style={{
-          marginLeft: '15px',
-          paddingLeft: '10px',
-          borderLeft: `2px solid ${color}55`,
-          color: '#cdd6f4',
-          fontSize: '12px',
-          fontStyle: 'italic',
-          lineHeight: 1.5,
-        }}>
-          {note}
-        </div>
-      )}
+      {/* RIGHT NOW — the live mechanical step + what's being discussed */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '2px' }}>
+        {agent.action && (
+          <div style={{ fontSize: '12px', color: '#cdd6f4', display: 'flex', gap: '7px', alignItems: 'baseline', flexWrap: 'wrap' }}>
+            <span style={{ color, fontWeight: 600, fontSize: '11px', textTransform: 'lowercase', flexShrink: 0 }}>
+              {agent.kind ?? 'working'} ▸
+            </span>
+            <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: '11px', color: '#7f8aa3', wordBreak: 'break-all' }}>
+              {agent.action}
+            </span>
+          </div>
+        )}
+        {note && (
+          <div style={{
+            paddingLeft: '10px',
+            borderLeft: `2px solid ${color}55`,
+            color: '#bac2de',
+            fontSize: '12.5px',
+            fontStyle: 'italic',
+            lineHeight: 1.55,
+          }}>
+            “{note}”
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -261,16 +294,16 @@ export function LiveActivity({ agents = [], workingFiles = [], live = {}, state 
   return (
     <section style={{ padding: isMobile ? '14px 16px' : '20px 28px', borderBottom: '1px solid #1e2430' }}>
       {/* Header row */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: objective ? '4px' : '14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '14px' }}>
         <h2 style={{
-          color: '#7f8aa3',
-          fontSize: '11px',
-          fontWeight: 600,
+          color: '#e6edf3',
+          fontSize: '13px',
+          fontWeight: 700,
           textTransform: 'uppercase',
           letterSpacing: '1px',
           margin: 0,
         }}>
-          Live Activity
+          What's happening now
         </h2>
 
         {/* Count chip */}
@@ -291,10 +324,10 @@ export function LiveActivity({ agents = [], workingFiles = [], live = {}, state 
         </div>
       </div>
 
-      {/* Objective subtitle */}
-      {objective && (
+      {/* When idle, show what the loop will pick up next */}
+      {count === 0 && objective && (
         <div style={{ color: '#7f8aa3', fontSize: '12px', marginBottom: '14px', lineHeight: 1.5 }}>
-          {objective}
+          <span style={{ color: '#5a6477' }}>next focus: </span>{objective}
         </div>
       )}
 

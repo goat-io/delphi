@@ -257,6 +257,7 @@ export interface AgentActivity {
   ageSec: number
   startedSec: number
   objective: string
+  task: string | null // plain-language brief: what we're solving / aiming to do
   action: string | null
   note: string | null
   kind: string // reading|editing|running|searching|delegating|thinking|working
@@ -339,6 +340,7 @@ function readOneAgent(file: string, mtimeMs: number): AgentActivity | null {
   }
   const lines = raw.split('\n')
   let objective = ''
+  let task = '' // the plain-language brief: what we're solving / aiming to do
   let firstTs: number | null = null
   let action: string | null = null
   let note: string | null = null
@@ -381,6 +383,17 @@ function readOneAgent(file: string, mtimeMs: number): AgentActivity | null {
             .find(s => s.length > 8 && !/^you are /i.test(s))
           objective = (firstLine ?? t.split('\n')[0] ?? '').slice(0, 110)
         }
+        // The human brief = the imperative instruction. For cycle agents it
+        // follows the hard-rules block (after "WORK COMPLETE: <one-line summary>");
+        // for subagents it's the whole prompt. Keep the first ~2 sentences.
+        const marker = 'WORK COMPLETE: <one-line summary>'
+        const mi = t.indexOf(marker)
+        const body = (mi >= 0 ? t.slice(mi + marker.length) : t)
+          .replace(/```[\s\S]*?```/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+        const sentences = body.split(/(?<=[.!?])\s+/).filter(s => s.length > 4)
+        task = sentences.slice(0, 2).join(' ').slice(0, 320)
       }
     }
     if (e.type === 'assistant' && msg) {
@@ -418,6 +431,7 @@ function readOneAgent(file: string, mtimeMs: number): AgentActivity | null {
     ageSec: Math.round((now - mtimeMs) / 1000),
     startedSec: firstTs ? Math.round((now - firstTs) / 1000) : 0,
     objective: objective || '(working)',
+    task: task || null,
     action,
     note,
     kind,
