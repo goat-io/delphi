@@ -986,6 +986,19 @@ export class CommitStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
           const { exportBrain: doExport } = await import('./brain-store-io.js')
           await doExport(exportStore, exportBrain_.id, resolve(cwd, 'brain'))
           console.log(`[commit] Brain JSONL exported to brain/`)
+
+          // Governance snapshot for the dashboard (health + coverage + goals).
+          // Written here while the store is open + exclusive; the dashboard
+          // reads only this flat file, never the live PGlite.
+          try {
+            const { writeEvolutionState } = await import('./evolution-state.js')
+            await writeEvolutionState(exportStore, exportBrain_.id, cwd)
+            console.log(`[commit] evolution-state.json written`)
+          } catch (err) {
+            console.log(
+              `[commit] evolution-state snapshot failed: ${String(err)}`,
+            )
+          }
         }
       } finally {
         await exportDb.close()

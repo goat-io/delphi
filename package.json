@@ -25,7 +25,11 @@
     "evolve:server": "tsx scripts/evolution-server.ts",
     "evolve:worker": "tsx scripts/evolution-worker.ts",
     "evolve:daemon": "tsx scripts/evolution-daemon.ts",
-    "evolve:cycle-once": "tsx scripts/evolution-cycle-once.ts"
+    "evolve:cycle-once": "tsx scripts/evolution-cycle-once.ts",
+    "evolution:state": "tsx scripts/evolution-state.ts",
+    "dashboard": "tsx scripts/dashboard-server.ts",
+    "dashboard:ui": "pnpm --filter delphi-dashboard dev",
+    "dashboard:build": "pnpm --filter delphi-dashboard build"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",

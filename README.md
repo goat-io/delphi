@@ -71,6 +71,23 @@ back into the Brain and the codebase. Humans approve only actions that affect
 outside parties (see [CONSTITUTION.md](./CONSTITUTION.md)); everything else is
 autonomous.
 
+### Watch it evolve — the Evolution Dashboard
+
+A read-only dashboard makes the loop visible to an external human: the seven
+steps lighting up live, region coverage creeping toward its governance target,
+the goals scoreboard, brain growth (leaves / beliefs / evidence over time), and
+a feed of every cycle (trigger → agent summary → gate → commit → closure).
+
+```bash
+pnpm dashboard:build   # bundle the UI once (single-file)
+pnpm dashboard         # serve UI + API on http://localhost:7700
+```
+
+It reads only the versioned flat files (`brain/evolution-state.json`,
+`evolution.log.md`, `brain/*.jsonl`, `daemon.out`) and streams updates over SSE
+— it never opens the live PGlite, so it never contends with the daemon. For UI
+hacking, `pnpm dashboard:ui` runs Vite with hot reload (proxying the API).
+
 ## Stack
 
 - TypeScript (strict), ESM, pnpm workspaces
