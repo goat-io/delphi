@@ -864,6 +864,28 @@ export class CommitStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
     const commitHash = gitShortHash(cwd)
     console.log(`[commit] pid=${process.pid} Hash: ${commitHash}`)
     writeState(cwd, runId, { commitHash, committed: true })
+
+    // Push to origin; on non-fast-forward, rebase-pull then retry (never force-push)
+    const pushResult = spawnSync('git', ['push'], { cwd, encoding: 'utf8' })
+    if (pushResult.status !== 0) {
+      console.log(
+        `[commit] Push rejected (non-fast-forward?) — rebasing and retrying`,
+      )
+      const pullResult = spawnSync('git', ['pull', '--rebase'], {
+        cwd,
+        encoding: 'utf8',
+        stdio: 'inherit',
+      })
+      if (pullResult.status === 0) {
+        spawnSync('git', ['push'], { cwd, encoding: 'utf8', stdio: 'inherit' })
+        console.log(`[commit] Push succeeded after rebase`)
+      } else {
+        console.error(`[commit] Rebase-pull failed — push skipped this cycle`)
+      }
+    } else {
+      console.log(`[commit] Pushed to origin`)
+    }
+
     return doneOutput(runId, input.cycle)
   }
 }
