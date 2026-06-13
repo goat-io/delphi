@@ -124,3 +124,4 @@ Automatically maintained by `pnpm evolve:loop`.
 | Health after | leaves=1134 beliefs=659 evidence=2126 openQ=99 |
 <!-- daemon 2026-06-12T20:35:34.889Z daemon starting interval=999min maxPerDay=12 -->
 <!-- daemon 2026-06-13T13:15:33.672Z daemon starting interval=1min maxPerDay=8 -->
+<!-- daemon 2026-06-13T14:09:00.192Z daemon starting interval=1min maxPerDay=10 executor=headless -->

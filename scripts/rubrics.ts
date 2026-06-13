@@ -180,6 +180,33 @@ const STANDING_RUBRICS: Array<{ title: string; content: RubricContent }> = [
       derivedFrom: ['DELPHI-MVP-0001 §Answer-Quality-Benchmark', 'RFC-0005'],
     },
   },
+  {
+    title: 'Cycle Atomicity Rubric',
+    content: {
+      criteria: [
+        {
+          id: 'log-committed-in-cycle',
+          name: 'Log committed in cycle',
+          description:
+            'evolution.log.md entry is committed before the cycle exits, preventing cross-cycle diff contamination',
+          weight: 0.6,
+          scoringRange: { min: 0, max: 1 },
+        },
+        {
+          id: 'no-stale-diff',
+          name: 'No stale diff bleed',
+          description:
+            "The cycle commit contains only this cycle's work — no uncommitted residue from prior cycles",
+          weight: 0.4,
+          scoringRange: { min: 0, max: 1 },
+        },
+      ],
+      scoringMethod: 'PASS_FAIL',
+      qualityGate: 1.0,
+      rejectGate: 0.5,
+      derivedFrom: ['Run6 incident: DISPUTED cycle left log uncommitted'],
+    },
+  },
 ]
 
 // ── seedRubrics ───────────────────────────────────────────────────────────────

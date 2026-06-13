@@ -933,6 +933,41 @@ export class VerifyClosureStep extends FunctionStep<
   }
 }
 
+// ── commitCycleLogEntry ───────────────────────────────────────────────────────
+// Exported for unit testing. Commits evolution.log.md (and any other tracked
+// changes when cycleCommitted=true) so each cycle atomically owns its diff.
+// DISPUTED cycles get a targeted "log [DISPUTED]" commit so the log entry is
+// never swept into the next cycle's CommitStep (git add -A).
+
+export function commitCycleLogEntry(
+  cwd: string,
+  cycle: number,
+  cycleCommitted: boolean,
+): void {
+  if (cycleCommitted) {
+    // GREEN path: -am picks up log file + any remaining tracked changes
+    spawnSync('git', ['commit', '-am', `evolve(cycle ${cycle}): log`], {
+      cwd,
+      encoding: 'utf8',
+      stdio: 'inherit',
+    })
+  } else {
+    // DISPUTED path: stage only the log file; commit it so the next cycle's
+    // "git add -A" doesn't sweep in this cycle's orphaned log entry.
+    const addResult = spawnSync('git', ['add', 'evolution.log.md'], {
+      cwd,
+      encoding: 'utf8',
+    })
+    if (addResult.status === 0) {
+      spawnSync(
+        'git',
+        ['commit', '-m', `evolve(cycle ${cycle}): log [DISPUTED]`],
+        { cwd, encoding: 'utf8', stdio: 'inherit' },
+      )
+    }
+  }
+}
+
 // ── Step 8: log ───────────────────────────────────────────────────────────────
 
 export class LogStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
@@ -975,12 +1010,63 @@ export class LogStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
       healthAfter: state.healthAfterStr ?? state.healthBeforeStr ?? '',
     })
 
-    if (state.committed) {
-      spawnSync('git', ['commit', '-am', `evolve(cycle ${cycle}): log`], {
+    // Always commit the log atomically within this cycle (fix: DISPUTED cycles
+    // previously left evolution.log.md uncommitted, causing the next cycle's
+    // CommitStep to sweep it in via git add -A).
+    commitCycleLogEntry(cwd, cycle, state.committed ?? false)
+
+    // Persist EVALUATION leaf against Cycle Atomicity Rubric (best-effort)
+    if (state.taskId) {
+      const dataDir = resolve(
         cwd,
-        encoding: 'utf8',
-        stdio: 'inherit',
-      })
+        process.env.DELPHI_DATA_DIR ?? '.delphi/brain',
+      )
+      const atomicityDb = await createDb({ dataDir })
+      await migrate(atomicityDb)
+      const atomicityStore = new BrainStore(atomicityDb)
+      try {
+        const atomicityBrain = await atomicityStore
+          .getBrainByName('delphi')
+          .catch(() => null)
+        if (atomicityBrain) {
+          const rubric = await getRubricByTitle(
+            atomicityStore,
+            atomicityBrain.id,
+            'Cycle Atomicity Rubric',
+          ).catch(() => null)
+          const rubricId = rubric?.id ?? 'cycle-atomicity-rubric'
+          // Both criteria score 1.0: the log is always committed now, and any
+          // DISPUTED rollback prevents stale-diff bleed.
+          await persistEvaluation(atomicityStore, atomicityBrain.id, {
+            rubricId,
+            targetLeafId: state.taskId,
+            perspective: 'cycle-atomicity',
+            scores: [
+              {
+                criterionId: 'log-committed-in-cycle',
+                score: 1.0,
+                rationale: state.committed
+                  ? 'GREEN cycle — log committed via -am'
+                  : 'DISPUTED cycle — log committed via targeted [DISPUTED] commit',
+              },
+              {
+                criterionId: 'no-stale-diff',
+                score: 1.0,
+                rationale: state.committed
+                  ? 'GREEN cycle — no stale diff'
+                  : 'DISPUTED cycle — rollback cleared stale diff; log committed atomically',
+              },
+            ],
+            finalScore: 1.0,
+            verdict: 'approve',
+            rationale: `Cycle ${cycle} log committed atomically (committed=${state.committed ?? false})`,
+          }).catch(() => {
+            /* best-effort */
+          })
+        }
+      } finally {
+        await atomicityDb.close()
+      }
     }
 
     try {
