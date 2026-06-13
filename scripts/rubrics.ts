@@ -295,6 +295,36 @@ const STANDING_RUBRICS: Array<{ title: string; content: RubricContent }> = [
       ],
     },
   },
+  {
+    title: 'Origin Push Rubric',
+    content: {
+      criteria: [
+        {
+          id: 'push-succeeded',
+          name: 'Push succeeded',
+          description:
+            'git push to origin/main succeeded (either directly or after rebase-pull)',
+          weight: 0.8,
+          scoringRange: { min: 0, max: 1 },
+        },
+        {
+          id: 'no-force-push',
+          name: 'No force-push used',
+          description:
+            'Push was performed with a non-destructive strategy (never --force)',
+          weight: 0.2,
+          scoringRange: { min: 0, max: 1 },
+        },
+      ],
+      scoringMethod: 'WEIGHTED',
+      qualityGate: 0.8,
+      rejectGate: 0.4,
+      derivedFrom: [
+        'QUEUED_TASK: leaf_24e8e991035b4e21aa478d72 — daemon must push cycle commits to origin (inside the Human Boundary)',
+        'CONSTITUTION.md §Autonomous-Actions — pushing to own repo is inside the boundary',
+      ],
+    },
+  },
 ]
 
 // ── seedRubrics ───────────────────────────────────────────────────────────────

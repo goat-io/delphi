@@ -39,10 +39,10 @@ afterAll(async () => {
 describe('rubrics', () => {
   it('1. seedRubrics is idempotent and criteria weights sum to 1.0', async () => {
     const first = await seedRubrics(store, brainId)
-    expect(first.length).toBe(9)
+    expect(first.length).toBe(10)
 
     const second = await seedRubrics(store, brainId)
-    expect(second.length).toBe(9)
+    expect(second.length).toBe(10)
 
     for (let i = 0; i < first.length; i++) {
       expect(first[i]!.id).toBe(second[i]!.id)
@@ -511,6 +511,135 @@ describe('rubrics', () => {
     const content2 = evalLeaf2.content as Record<string, unknown>
     expect(content2.verdict).toBe('approve')
     expect(content2.finalScore).toBeCloseTo(1.0)
+  })
+
+  it('9. Origin Push Rubric: seeded with WEIGHTED scoring and two criteria summing to 1.0', async () => {
+    const rubric = await getRubricByTitle(store, brainId, 'Origin Push Rubric')
+    expect(rubric).not.toBeNull()
+
+    const content = rubric!.content as unknown as RubricContent
+    expect(content.scoringMethod).toBe('WEIGHTED')
+    expect(content.qualityGate).toBeCloseTo(0.8)
+    expect(content.rejectGate).toBeCloseTo(0.4)
+    expect(content.criteria).toHaveLength(2)
+
+    const ids = content.criteria.map(c => c.id)
+    expect(ids).toContain('push-succeeded')
+    expect(ids).toContain('no-force-push')
+
+    const weightSum = content.criteria.reduce((s, c) => s + c.weight, 0)
+    expect(weightSum).toBeCloseTo(1.0, 5)
+  })
+
+  it('9b. Origin Push Rubric: EVALUATION leaf persisted on push success', async () => {
+    await seedRubrics(store, brainId)
+
+    const taskLeaf = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'ACTIVE',
+      title: 'Origin push evaluation target',
+      aliases: [],
+      tags: ['test', 'origin-push'],
+    })
+
+    const rubricLeaf = await getRubricByTitle(
+      store,
+      brainId,
+      'Origin Push Rubric',
+    )
+    expect(rubricLeaf).not.toBeNull()
+
+    const evalLeaf = await persistEvaluation(store, brainId, {
+      rubricId: rubricLeaf!.id,
+      targetLeafId: taskLeaf.id,
+      perspective: 'origin-push',
+      scores: [
+        {
+          criterionId: 'push-succeeded',
+          score: 1.0,
+          rationale: 'Push succeeded directly',
+        },
+        {
+          criterionId: 'no-force-push',
+          score: 1.0,
+          rationale: 'Non-destructive push strategy used (never --force)',
+        },
+      ],
+      finalScore: 1.0,
+      verdict: 'approve',
+      rationale: 'origin/main updated at commit abc1234',
+    })
+
+    expect(evalLeaf.kind).toBe('EVALUATION')
+    expect(evalLeaf.title).toContain('origin-push')
+    const content = evalLeaf.content as Record<string, unknown>
+    expect(content.finalScore).toBeCloseTo(1.0)
+    expect(content.verdict).toBe('approve')
+    expect(content.rubricId).toBe(rubricLeaf!.id)
+    expect(content.targetLeafId).toBe(taskLeaf.id)
+
+    const scores = content.scores as Array<{
+      criterionId: string
+      score: number
+    }>
+    expect(scores).toHaveLength(2)
+    expect(scores.find(s => s.criterionId === 'push-succeeded')?.score).toBe(1)
+    expect(scores.find(s => s.criterionId === 'no-force-push')?.score).toBe(1)
+  })
+
+  it('9c. Origin Push Rubric: EVALUATION leaf persisted on push failure (reject verdict)', async () => {
+    await seedRubrics(store, brainId)
+
+    const taskLeaf = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'ACTIVE',
+      title: 'Origin push failure target',
+      aliases: [],
+      tags: ['test', 'origin-push'],
+    })
+
+    const rubricLeaf = await getRubricByTitle(
+      store,
+      brainId,
+      'Origin Push Rubric',
+    )
+    expect(rubricLeaf).not.toBeNull()
+
+    const evalLeaf = await persistEvaluation(store, brainId, {
+      rubricId: rubricLeaf!.id,
+      targetLeafId: taskLeaf.id,
+      perspective: 'origin-push',
+      scores: [
+        {
+          criterionId: 'push-succeeded',
+          score: 0.0,
+          rationale: 'Push failed — commits remain local only',
+        },
+        {
+          criterionId: 'no-force-push',
+          score: 1.0,
+          rationale: 'Non-destructive push strategy used (never --force)',
+        },
+      ],
+      finalScore: 0.2,
+      verdict: 'reject',
+      rationale:
+        'Push failed after cycle commit abc9999; commits are local only',
+    })
+
+    expect(evalLeaf.kind).toBe('EVALUATION')
+    const content = evalLeaf.content as Record<string, unknown>
+    expect(content.verdict).toBe('reject')
+    expect(content.rubricId).toBe(rubricLeaf!.id)
+
+    const scores = content.scores as Array<{
+      criterionId: string
+      score: number
+    }>
+    expect(scores.find(s => s.criterionId === 'push-succeeded')?.score).toBe(0)
+    expect(scores.find(s => s.criterionId === 'no-force-push')?.score).toBe(1)
   })
 
   it('7b. verify-closure: QUEUED_TASK with no files committed → reject verdict persisted', async () => {

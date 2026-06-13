@@ -80,6 +80,7 @@ export interface CycleState {
   // Written by commit
   commitHash?: string
   committed?: boolean
+  pushOk?: boolean
   // Written by absorb
   absorbed?: boolean
   // Written by verify-closure
@@ -866,24 +867,94 @@ export class CommitStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
     writeState(cwd, runId, { commitHash, committed: true })
 
     // Push to origin; on non-fast-forward, rebase-pull then retry (never force-push)
+    let pushOk = false
+    let rebaseRequired = false
     const pushResult = spawnSync('git', ['push'], { cwd, encoding: 'utf8' })
     if (pushResult.status !== 0) {
       console.log(
         `[commit] Push rejected (non-fast-forward?) — rebasing and retrying`,
       )
+      rebaseRequired = true
       const pullResult = spawnSync('git', ['pull', '--rebase'], {
         cwd,
         encoding: 'utf8',
         stdio: 'inherit',
       })
       if (pullResult.status === 0) {
-        spawnSync('git', ['push'], { cwd, encoding: 'utf8', stdio: 'inherit' })
-        console.log(`[commit] Push succeeded after rebase`)
+        const retryPush = spawnSync('git', ['push'], {
+          cwd,
+          encoding: 'utf8',
+          stdio: 'inherit',
+        })
+        pushOk = retryPush.status === 0
+        if (pushOk) {
+          console.log(`[commit] Push succeeded after rebase`)
+        } else {
+          console.error(`[commit] Push failed even after rebase`)
+        }
       } else {
         console.error(`[commit] Rebase-pull failed — push skipped this cycle`)
       }
     } else {
+      pushOk = true
       console.log(`[commit] Pushed to origin`)
+    }
+
+    writeState(cwd, runId, { pushOk })
+
+    // Persist EVALUATION leaf against Origin Push Rubric (best-effort)
+    if (state.taskId) {
+      const pushDataDir = resolve(
+        cwd,
+        process.env.DELPHI_DATA_DIR ?? '.delphi/brain',
+      )
+      const pushDb = await createDb({ dataDir: pushDataDir })
+      await migrate(pushDb)
+      const pushStore = new BrainStore(pushDb)
+      try {
+        const pushBrain = await pushStore
+          .getBrainByName('delphi')
+          .catch(() => null)
+        if (pushBrain) {
+          const pushRubric = await getRubricByTitle(
+            pushStore,
+            pushBrain.id,
+            'Origin Push Rubric',
+          ).catch(() => null)
+          const rubricId = pushRubric?.id ?? 'origin-push-rubric'
+          const pushScore = pushOk ? 1.0 : 0.0
+          await persistEvaluation(pushStore, pushBrain.id, {
+            rubricId,
+            targetLeafId: state.taskId,
+            perspective: 'origin-push',
+            scores: [
+              {
+                criterionId: 'push-succeeded',
+                score: pushScore,
+                rationale: pushOk
+                  ? rebaseRequired
+                    ? 'Push succeeded after rebase-pull (non-fast-forward resolved)'
+                    : 'Push succeeded directly'
+                  : 'Push failed — commits remain local only',
+              },
+              {
+                criterionId: 'no-force-push',
+                score: 1.0,
+                rationale: 'Non-destructive push strategy used (never --force)',
+              },
+            ],
+            finalScore: pushOk ? 1.0 : 0.2,
+            verdict: pushOk ? 'approve' : 'reject',
+            rationale: pushOk
+              ? `origin/main updated at commit ${commitHash}${rebaseRequired ? ' (rebase-pull required)' : ''}`
+              : `Push failed after cycle commit ${commitHash}; commits are local only`,
+          }).catch(() => {
+            /* best-effort */
+          })
+        }
+      } finally {
+        await pushDb.close()
+      }
     }
 
     return doneOutput(runId, input.cycle)
