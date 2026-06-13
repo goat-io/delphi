@@ -455,3 +455,15 @@ Automatically maintained by `pnpm evolve:loop`.
 | Health before | leaves=1293 beliefs=687 evidence=2354 openQ=99 |
 | Health after | leaves=1294 beliefs=687 evidence=2354 openQ=99 |
 <!-- daemon 2026-06-13T18:44:19.029Z daemon starting interval=1min maxPerDay=12 executor=headless -->
+## Cycle 1 — 2026-06-13T18:46:00.963Z
+
+| Field | Value |
+|-------|-------|
+| Task | leaf_edb571412e6e4730b1377cf9 — [OPEN_QUESTION] Ontology defines: - Types - Relationships - Validation Rules --- Capability answers: What can an agent d |
+| Trigger | OPEN_QUESTION |
+| Agent summary | WORK COMPLETE: Researched open question distinguishing Ontology (structural classification of knowledge via Types/Relationships/Validation Rules, RFC-0006) from Capability (agent capacity to perform work via methodologies/rubrics, RFC-0013); written evidence-backed answer to research/ontology-defines-types-relationships-validation-rules-capabi.md | guard=allow requiresReview=false |
+| Gate | GREEN |
+| Commit | c068133 |
+| Closure | CLOSED |
+| Health before | leaves=1296 beliefs=687 evidence=2354 openQ=96 |
+| Health after | leaves=1315 beliefs=700 evidence=2386 openQ=96 |
