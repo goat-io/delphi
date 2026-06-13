@@ -166,3 +166,15 @@ Automatically maintained by `pnpm evolve:loop`.
 | Health before | leaves=1194 beliefs=685 evidence=2352 openQ=99 |
 | Health after | leaves=1194 beliefs=685 evidence=2352 openQ=99 |
 <!-- daemon 2026-06-13T14:44:00.339Z daemon starting interval=1min maxPerDay=10 executor=headless -->
+## Cycle 1 — 2026-06-13T14:52:10.129Z
+
+| Field | Value |
+|-------|-------|
+| Task | leaf_089a6d7bf699422bb638dd02 — [loop-defect] DISPUTED_TASK: disputed:leaf_cc25cc4fe36e436a8de6f04c |
+| Trigger | QUEUED_TASK |
+| Agent summary | WORK COMPLETE: `ReviewStep` now reads resolution thresholds from the "Review Decision Rubric" leaf and persists a final `review-decision` EVALUATION leaf per cycle; `seedRubrics` seeds 8 rubrics (up from 7) with full regression coverage. | guard=allow requiresReview=true | review=approved score=1.00 [Weighted approval 1.00 ≥ 0.7.] |
+| Gate | GREEN |
+| Commit | 075fb99 |
+| Closure | CLOSED |
+| Health before | leaves=1197 beliefs=685 evidence=2352 openQ=99 |
+| Health after | leaves=1202 beliefs=685 evidence=2352 openQ=99 |
