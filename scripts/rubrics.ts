@@ -386,6 +386,35 @@ const STANDING_RUBRICS: Array<{ title: string; content: RubricContent }> = [
     },
   },
   {
+    title: 'Open Question Closure Rubric',
+    content: {
+      criteria: [
+        {
+          id: 'research-artifact-exists',
+          name: 'Research artifact exists',
+          description:
+            'A research file was added, modified, or already exists confirming the question is answered',
+          weight: 0.6,
+          scoringRange: { min: 0, max: 1 },
+        },
+        {
+          id: 'work-complete',
+          name: 'WORK COMPLETE confirmed',
+          description:
+            'Agent produced a WORK COMPLETE marker indicating the open question has been addressed',
+          weight: 0.4,
+          scoringRange: { min: 0, max: 1 },
+        },
+      ],
+      scoringMethod: 'WEIGHTED',
+      qualityGate: 0.6,
+      rejectGate: 0.0,
+      derivedFrom: [
+        'UNVERIFIED_CLOSURE: leaf_5557a212d5954a0282823b5b — OPEN_QUESTION closure gate must read RUBRIC + persist EVALUATION even when research file pre-exists from a prior cycle',
+      ],
+    },
+  },
+  {
     title: 'Disputed Cycle Rubric',
     content: {
       criteria: [

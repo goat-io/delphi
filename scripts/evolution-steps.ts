@@ -6,7 +6,14 @@
 // the workflow definition, and the shared helpers they depend on.
 
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { resolve } from 'node:path'
 import type { StepExecutionContext } from '@goatlab/delphi-core'
 import { FunctionStep, step, Workflow } from '@goatlab/delphi-core'
@@ -1207,11 +1214,33 @@ export class VerifyClosureStep extends FunctionStep<
 
       let researchAdded = false
       if (state.trigger === 'OPEN_QUESTION') {
-        researchAdded = gitAddedFiles(
+        const openQAdded = gitAddedFiles(
           cwd,
           state.preCommitHash!,
           state.commitHash!,
         ).some(f => f.startsWith('research/'))
+        const openQModified = gitChangedFiles(
+          cwd,
+          state.preCommitHash!,
+          state.commitHash!,
+        ).some(f => f.startsWith('research/'))
+        // "Already answered" case: the research file was created in a prior cycle and
+        // the agent verified the question is answered without touching it again.
+        // Only activate when agent confirmed WORK COMPLETE and no file was touched.
+        let researchPreExists = false
+        if (!openQAdded && !openQModified && (state.hasWorkComplete ?? false)) {
+          try {
+            const researchDir = resolve(cwd, 'research')
+            if (existsSync(researchDir)) {
+              researchPreExists = readdirSync(researchDir).some(f =>
+                f.endsWith('.md'),
+              )
+            }
+          } catch {
+            // non-fatal
+          }
+        }
+        researchAdded = openQAdded || openQModified || researchPreExists
       }
 
       let rfcAdded = false
@@ -1302,6 +1331,54 @@ export class VerifyClosureStep extends FunctionStep<
         rfcAdded ||
         queuedTaskDone ||
         specResearchAdded
+
+      // OPEN_QUESTION closure: reads "Open Question Closure Rubric" + persists EVALUATION.
+      // Covers three cases: research file newly added, modified, or pre-existing with WORK COMPLETE.
+      if (state.trigger === 'OPEN_QUESTION' && state.taskId) {
+        try {
+          const oqRubric = await getRubricByTitle(
+            store,
+            brainId,
+            'Open Question Closure Rubric',
+          )
+          if (oqRubric) {
+            const researchScore = researchAdded ? 1 : 0
+            const workCompleteScore = (state.hasWorkComplete ?? false) ? 1 : 0
+            const oqFinalScore = 0.6 * researchScore + 0.4 * workCompleteScore
+            await persistEvaluation(store, brainId, {
+              rubricId: oqRubric.id,
+              targetLeafId: state.taskId,
+              perspective: 'open-question-closure',
+              scores: [
+                {
+                  criterionId: 'research-artifact-exists',
+                  score: researchScore,
+                  rationale: researchAdded
+                    ? 'Research artifact present (added, modified, or pre-existing confirmed by WORK COMPLETE)'
+                    : 'No research artifact found for this open question',
+                },
+                {
+                  criterionId: 'work-complete',
+                  score: workCompleteScore,
+                  rationale:
+                    workCompleteScore === 1
+                      ? 'WORK COMPLETE marker present in agent output'
+                      : 'WORK COMPLETE marker absent from agent output',
+                },
+              ],
+              finalScore: oqFinalScore,
+              verdict: closureMet ? 'approve' : 'reject',
+              rationale: closureMet
+                ? `OPEN_QUESTION closure verified: researchArtifact=${researchAdded} workComplete=${state.hasWorkComplete ?? false}`
+                : `OPEN_QUESTION closure UNVERIFIED: researchArtifact=${researchAdded} workComplete=${state.hasWorkComplete ?? false}`,
+            }).catch(() => {
+              /* best-effort */
+            })
+          }
+        } catch {
+          // non-fatal: evaluation persistence must not block cycle closure
+        }
+      }
 
       // For non-QUEUED_TASK triggers (SPEC_GAP, OPEN_QUESTION, etc.) persist a closure
       // EVALUATION leaf so every closure outcome is rubric-backed (best-effort).

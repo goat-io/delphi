@@ -39,10 +39,10 @@ afterAll(async () => {
 describe('rubrics', () => {
   it('1. seedRubrics is idempotent and criteria weights sum to 1.0', async () => {
     const first = await seedRubrics(store, brainId)
-    expect(first.length).toBe(13)
+    expect(first.length).toBe(14)
 
     const second = await seedRubrics(store, brainId)
-    expect(second.length).toBe(13)
+    expect(second.length).toBe(14)
 
     for (let i = 0; i < first.length; i++) {
       expect(first[i]!.id).toBe(second[i]!.id)
@@ -582,6 +582,175 @@ describe('rubrics', () => {
     }>
     expect(scores.find(s => s.criterionId === 'files-committed')?.score).toBe(1)
     expect(scores.find(s => s.criterionId === 'work-complete')?.score).toBe(1)
+  })
+
+  it('7e. Open Question Closure Rubric: seeded with two criteria and correct weights', async () => {
+    // Regression: UNVERIFIED_CLOSURE leaf_5557a212d5954a0282823b5b — OPEN_QUESTION
+    // closure gate must read from a RUBRIC leaf and persist EVALUATION even when the
+    // research file pre-exists from a prior cycle (agent says WORK COMPLETE but no
+    // new file was added, so the old gitAddedFiles check found nothing).
+    await seedRubrics(store, brainId)
+    const rubric = await getRubricByTitle(
+      store,
+      brainId,
+      'Open Question Closure Rubric',
+    )
+    expect(rubric).not.toBeNull()
+
+    const content = rubric!.content as unknown as RubricContent
+    expect(content.scoringMethod).toBe('WEIGHTED')
+    expect(content.qualityGate).toBeCloseTo(0.6)
+    expect(content.rejectGate).toBeCloseTo(0.0)
+    expect(content.criteria).toHaveLength(2)
+
+    const ids = content.criteria.map(c => c.id)
+    expect(ids).toContain('research-artifact-exists')
+    expect(ids).toContain('work-complete')
+
+    const weightSum = content.criteria.reduce((s, c) => s + c.weight, 0)
+    expect(weightSum).toBeCloseTo(1.0, 5)
+
+    const researchCriterion = content.criteria.find(
+      c => c.id === 'research-artifact-exists',
+    )
+    expect(researchCriterion?.weight).toBeCloseTo(0.6)
+  })
+
+  it('7f. verify-closure: OPEN_QUESTION with pre-existing research + WORK COMPLETE persists approve EVALUATION', async () => {
+    // Regression for UNVERIFIED_CLOSURE leaf_5557a212d5954a0282823b5b:
+    // When the research/ file was created in a prior cycle and the agent confirms
+    // WORK COMPLETE without touching the file again, the closure gate must:
+    //   1. Recognise the pre-existing research as a valid closure artifact
+    //   2. Read from "Open Question Closure Rubric"
+    //   3. Persist an EVALUATION leaf with approve verdict
+    await seedRubrics(store, brainId)
+
+    const questionLeaf = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'ACTIVE',
+      title:
+        '[OPEN_QUESTION] regression closure target (pre-existing research)',
+      aliases: [],
+      tags: ['test', 'open-question'],
+    })
+
+    const rubricLeaf = await getRubricByTitle(
+      store,
+      brainId,
+      'Open Question Closure Rubric',
+    )
+    expect(rubricLeaf).not.toBeNull()
+
+    // researchPreExists=true (research/ dir has .md file), hasWorkComplete=true
+    const researchArtifactExists = true
+    const workComplete = true
+    const oqScores = [
+      {
+        criterionId: 'research-artifact-exists',
+        score: researchArtifactExists ? 1 : 0,
+        rationale:
+          'Research artifact present (added, modified, or pre-existing confirmed by WORK COMPLETE)',
+      },
+      {
+        criterionId: 'work-complete',
+        score: workComplete ? 1 : 0,
+        rationale: 'WORK COMPLETE marker present in agent output',
+      },
+    ]
+    const finalScore =
+      0.6 * (researchArtifactExists ? 1 : 0) + 0.4 * (workComplete ? 1 : 0)
+
+    const evalLeaf = await persistEvaluation(store, brainId, {
+      rubricId: rubricLeaf!.id,
+      targetLeafId: questionLeaf.id,
+      perspective: 'open-question-closure',
+      scores: oqScores,
+      finalScore,
+      verdict: 'approve',
+      rationale: `OPEN_QUESTION closure verified: researchArtifact=true workComplete=true`,
+    })
+
+    expect(evalLeaf.kind).toBe('EVALUATION')
+    expect(evalLeaf.title).toContain('open-question-closure')
+    const content = evalLeaf.content as Record<string, unknown>
+    expect(content.verdict).toBe('approve')
+    expect(content.finalScore).toBeCloseTo(1.0)
+    expect(content.rubricId).toBe(rubricLeaf!.id)
+    expect(content.targetLeafId).toBe(questionLeaf.id)
+
+    const scores = content.scores as Array<{
+      criterionId: string
+      score: number
+    }>
+    expect(scores).toHaveLength(2)
+    expect(
+      scores.find(s => s.criterionId === 'research-artifact-exists')?.score,
+    ).toBe(1)
+    expect(scores.find(s => s.criterionId === 'work-complete')?.score).toBe(1)
+  })
+
+  it('7g. verify-closure: OPEN_QUESTION with no research artifact persists reject EVALUATION', async () => {
+    // Ensures the gate persists a reject EVALUATION (not skips) when no research
+    // artifact exists and WORK COMPLETE is absent — so the anomaly is traceable.
+    await seedRubrics(store, brainId)
+
+    const questionLeaf = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'ACTIVE',
+      title: '[OPEN_QUESTION] regression closure target (no research)',
+      aliases: [],
+      tags: ['test', 'open-question'],
+    })
+
+    const rubricLeaf = await getRubricByTitle(
+      store,
+      brainId,
+      'Open Question Closure Rubric',
+    )
+    expect(rubricLeaf).not.toBeNull()
+
+    const researchArtifactExists = false
+    const workComplete = false
+    const oqScores = [
+      {
+        criterionId: 'research-artifact-exists',
+        score: 0,
+        rationale: 'No research artifact found for this open question',
+      },
+      {
+        criterionId: 'work-complete',
+        score: 0,
+        rationale: 'WORK COMPLETE marker absent from agent output',
+      },
+    ]
+    const finalScore =
+      0.6 * (researchArtifactExists ? 1 : 0) + 0.4 * (workComplete ? 1 : 0)
+
+    const evalLeaf = await persistEvaluation(store, brainId, {
+      rubricId: rubricLeaf!.id,
+      targetLeafId: questionLeaf.id,
+      perspective: 'open-question-closure',
+      scores: oqScores,
+      finalScore,
+      verdict: 'reject',
+      rationale: `OPEN_QUESTION closure UNVERIFIED: researchArtifact=false workComplete=false`,
+    })
+
+    expect(evalLeaf.kind).toBe('EVALUATION')
+    const content = evalLeaf.content as Record<string, unknown>
+    expect(content.verdict).toBe('reject')
+    expect(content.finalScore).toBeCloseTo(0.0)
+
+    const scores = content.scores as Array<{
+      criterionId: string
+      score: number
+    }>
+    expect(
+      scores.find(s => s.criterionId === 'research-artifact-exists')?.score,
+    ).toBe(0)
+    expect(scores.find(s => s.criterionId === 'work-complete')?.score).toBe(0)
   })
 
   it('9. Origin Push Rubric: seeded with WEIGHTED scoring and two criteria summing to 1.0', async () => {

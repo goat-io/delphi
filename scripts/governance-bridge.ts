@@ -69,7 +69,11 @@ export async function persistEvaluation(
 
   const existing = await store.listLeaves(brainId)
   const found = existing.find(
-    l => l.kind === 'EVALUATION' && l.title === evalTitle,
+    l =>
+      l.kind === 'EVALUATION' &&
+      l.title === evalTitle &&
+      (l.content as Record<string, unknown>)?.targetLeafId ===
+        input.targetLeafId,
   )
   if (found) {
     return found
