@@ -16,6 +16,7 @@ import {
   appendCycleLog,
   gateGreen,
   gitAddedFiles,
+  gitChangedFiles,
   gitPorcelain,
   gitShortHash,
   healthStr,
@@ -1048,17 +1049,26 @@ export class VerifyClosureStep extends FunctionStep<
       let rfcAdded = false
       let specResearchAdded = false
       if (state.trigger === 'SPEC_GAP') {
-        const specGapFiles = gitAddedFiles(
+        // New RFC files only (added, not modified — each gap needs its own RFC).
+        const specGapAddedFiles = gitAddedFiles(
           cwd,
           state.preCommitHash!,
           state.commitHash!,
         )
-        rfcAdded = specGapFiles.some(
+        rfcAdded = specGapAddedFiles.some(
           f => f.startsWith('rfcs/RFC-') && f.endsWith('.md'),
         )
-        // A research/ file documenting why a gap is already covered is also
-        // a valid SPEC_GAP closure (e.g. "this primitive is in RFC-0027 §X").
-        specResearchAdded = specGapFiles.some(f => f.startsWith('research/'))
+        // A research/ file added OR modified documents why a gap is already covered
+        // (e.g. "this primitive is in RFC-0027 §X"). Modified files count because an
+        // agent updating an existing research document is a valid closure artifact.
+        const specGapChangedFiles = gitChangedFiles(
+          cwd,
+          state.preCommitHash!,
+          state.commitHash!,
+        )
+        specResearchAdded = specGapChangedFiles.some(f =>
+          f.startsWith('research/'),
+        )
       }
 
       // QUEUED_TASK closure: any committed file changes + hasWorkComplete → done.

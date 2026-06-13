@@ -88,6 +88,20 @@ export function gitAddedFiles(
   return (r.stdout ?? '').split('\n').filter(Boolean)
 }
 
+/** Return names of files added OR modified between two commits (uses --diff-filter=AM). */
+export function gitChangedFiles(
+  cwd: string,
+  before: string,
+  after: string,
+): string[] {
+  const r = spawnSync(
+    'git',
+    ['diff', '--name-only', '--diff-filter=AM', `${before}..${after}`],
+    { cwd, encoding: 'utf8' },
+  )
+  return (r.stdout ?? '').split('\n').filter(Boolean)
+}
+
 // ── Agent executor abstraction ────────────────────────────────────────────────
 
 export interface AgentResult {

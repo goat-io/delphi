@@ -513,6 +513,77 @@ describe('rubrics', () => {
     expect(content2.finalScore).toBeCloseTo(1.0)
   })
 
+  it('7d. verify-closure SPEC_GAP regression: modified research file (specResearchAdded) persists approve EVALUATION', async () => {
+    // Regression for UNVERIFIED_CLOSURE leaf_c3014c3340d240bea9606133:
+    // When an agent modifies an existing research/ file instead of creating a new one,
+    // gitChangedFiles (--diff-filter=AM) detects it but gitAddedFiles (--diff-filter=A)
+    // did not. This caused specResearchAdded=false → closureMet=false → unverified=true.
+    // Fix: VerifyClosureStep now uses gitChangedFiles for specResearchAdded.
+    // This test verifies the evaluation path when specResearchAdded=true.
+    await seedRubrics(store, brainId)
+
+    const specGapLeaf = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'ACTIVE',
+      title: 'SPEC_GAP modified-research closure regression',
+      aliases: [],
+      tags: ['test', 'spec-gap'],
+    })
+
+    const rubricLeaf = await getRubricByTitle(
+      store,
+      brainId,
+      'Task Closure Rubric',
+    )
+    expect(rubricLeaf).not.toBeNull()
+
+    // Simulate SPEC_GAP where research file was MODIFIED (not added):
+    // specResearchAdded=true, rfcAdded=false → artifactPresent=true, closureMet=true
+    const artifactPresent = true // modified research/ file detected via gitChangedFiles
+    const workComplete = true
+    const closureScores = [
+      {
+        criterionId: 'files-committed',
+        score: artifactPresent ? 1 : 0,
+        rationale:
+          'Closure artifact present (RFC, research file, or debt resolved)',
+      },
+      {
+        criterionId: 'work-complete',
+        score: workComplete ? 1 : 0,
+        rationale: 'WORK COMPLETE marker present in agent output',
+      },
+    ]
+    const finalScore =
+      closureScores.reduce((s, c) => s + c.score, 0) / closureScores.length
+
+    const evalLeaf = await persistEvaluation(store, brainId, {
+      rubricId: rubricLeaf!.id,
+      targetLeafId: specGapLeaf.id,
+      perspective: 'task-closure',
+      scores: closureScores,
+      finalScore,
+      verdict: 'approve',
+      rationale:
+        'Closure verified for trigger SPEC_GAP (modified research file)',
+    })
+
+    expect(evalLeaf.kind).toBe('EVALUATION')
+    const content = evalLeaf.content as Record<string, unknown>
+    expect(content.verdict).toBe('approve')
+    expect(content.finalScore).toBeCloseTo(1.0)
+    expect(content.rubricId).toBe(rubricLeaf!.id)
+    expect(content.targetLeafId).toBe(specGapLeaf.id)
+
+    const scores = content.scores as Array<{
+      criterionId: string
+      score: number
+    }>
+    expect(scores.find(s => s.criterionId === 'files-committed')?.score).toBe(1)
+    expect(scores.find(s => s.criterionId === 'work-complete')?.score).toBe(1)
+  })
+
   it('9. Origin Push Rubric: seeded with WEIGHTED scoring and two criteria summing to 1.0', async () => {
     const rubric = await getRubricByTitle(store, brainId, 'Origin Push Rubric')
     expect(rubric).not.toBeNull()
