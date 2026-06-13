@@ -145,14 +145,16 @@ const STANDING_RUBRICS: Array<{ title: string; content: RubricContent }> = [
         {
           id: 'cites-sources',
           name: 'Cites correct sources',
-          description: 'Answer evidence list is non-empty and references source assets',
+          description:
+            'Answer evidence list is non-empty and references source assets',
           weight: 0.25,
           scoringRange: { min: 0, max: 1 },
         },
         {
           id: 'key-claims-present',
           name: 'Key claims present',
-          description: 'Answer summary contains the key claims expected from the domain knowledge',
+          description:
+            'Answer summary contains the key claims expected from the domain knowledge',
           weight: 0.25,
           scoringRange: { min: 0, max: 1 },
         },
@@ -166,7 +168,8 @@ const STANDING_RUBRICS: Array<{ title: string; content: RubricContent }> = [
         {
           id: 'contradictions-surface',
           name: 'Contradictions surface',
-          description: 'Known contradictions are reported when present in the knowledge base',
+          description:
+            'Known contradictions are reported when present in the knowledge base',
           weight: 0.25,
           scoringRange: { min: 0, max: 1 },
         },

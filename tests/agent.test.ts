@@ -282,7 +282,11 @@ describe('delphi-agent answer', () => {
 describe('Answer Quality Benchmark — rubric-backed (MVP-0001)', () => {
   it('7. Answer Quality Rubric is seeded and has 4 criteria with weights summing to 1.0', async () => {
     await seedRubrics(store, brainId)
-    const rubricLeaf = await getRubricByTitle(store, brainId, 'Answer Quality Rubric')
+    const rubricLeaf = await getRubricByTitle(
+      store,
+      brainId,
+      'Answer Quality Rubric',
+    )
     expect(rubricLeaf).not.toBeNull()
     const content = rubricLeaf!.content as unknown as RubricContent
     expect(content.criteria).toHaveLength(4)
@@ -298,7 +302,11 @@ describe('Answer Quality Benchmark — rubric-backed (MVP-0001)', () => {
 
   it('8. answerQuestion result scores pass the Answer Quality Rubric and EVALUATION leaf is persisted', async () => {
     await seedRubrics(store, brainId)
-    const rubricLeaf = await getRubricByTitle(store, brainId, 'Answer Quality Rubric')
+    const rubricLeaf = await getRubricByTitle(
+      store,
+      brainId,
+      'Answer Quality Rubric',
+    )
     expect(rubricLeaf).not.toBeNull()
     const rubric = rubricLeaf!.content as unknown as RubricContent
 
@@ -354,11 +362,12 @@ describe('Answer Quality Benchmark — rubric-backed (MVP-0001)', () => {
     }
     const finalScore = weightSum > 0 ? total / weightSum : 0
 
-    const verdict = finalScore >= rubric.qualityGate
-      ? ('approve' as const)
-      : finalScore <= rubric.rejectGate
-        ? ('reject' as const)
-        : ('needs_human' as const)
+    const verdict =
+      finalScore >= rubric.qualityGate
+        ? ('approve' as const)
+        : finalScore <= rubric.rejectGate
+          ? ('reject' as const)
+          : ('needs_human' as const)
 
     const evalLeaf = await persistEvaluation(store, brainId, {
       rubricId: rubricLeaf!.id,

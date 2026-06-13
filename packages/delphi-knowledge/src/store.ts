@@ -87,10 +87,17 @@ function mapLeaf(row: Record<string, unknown>): Leaf {
     statement: n2u(row.statement as string | null),
     aliases: j(row.aliases),
     tags: j(row.tags),
-    confidence:
-      row.confidence != null
-        ? (j(row.confidence) as Record<string, unknown>)
-        : undefined,
+    confidence: (() => {
+      if (row.confidence == null) {
+        return undefined
+      }
+      const c = j(row.confidence) as Record<string, unknown>
+      // Treat empty confidence object {} as undefined (malformed legacy data)
+      if (typeof c === 'object' && c !== null && Object.keys(c).length === 0) {
+        return undefined
+      }
+      return c
+    })(),
     regionId: n2u(row.region_id as string | null),
     content:
       row.content != null
@@ -928,6 +935,126 @@ export class BrainStore {
       [leafId],
     )
     return rows.map(mapLeafEvent)
+  }
+
+  // List all evidence for a brain (new — existing only has listEvidenceByLeaf)
+  async listAllEvidence(brainId: string): Promise<EvidenceRef[]> {
+    const { rows } = await this.db.query<Record<string, unknown>>(
+      `SELECT * FROM evidence WHERE brain_id = $1 ORDER BY id`,
+      [brainId],
+    )
+    return rows.map(mapEvidence)
+  }
+
+  // List all leaf_events for a brain
+  async listEvents(brainId: string): Promise<LeafEvent[]> {
+    const { rows } = await this.db.query<Record<string, unknown>>(
+      `SELECT * FROM leaf_events WHERE brain_id = $1 ORDER BY id`,
+      [brainId],
+    )
+    return rows.map(mapLeafEvent)
+  }
+
+  // Upsert raw leaf by id — ON CONFLICT DO NOTHING
+  async upsertLeafRaw(row: Leaf): Promise<void> {
+    await this.db.query(
+      `INSERT INTO leaves(id, brain_id, kind, status, title, summary, statement, aliases, tags, confidence, region_id, content, version, created_at, updated_at)
+       VALUES($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12::jsonb, $13, $14, $15)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        row.id,
+        row.brainId,
+        row.kind,
+        row.status,
+        row.title,
+        row.summary ?? null,
+        row.statement ?? null,
+        JSON.stringify(row.aliases ?? []),
+        JSON.stringify(row.tags ?? []),
+        row.confidence !== undefined ? JSON.stringify(row.confidence) : null,
+        row.regionId ?? null,
+        row.content !== undefined ? JSON.stringify(row.content) : null,
+        row.version,
+        row.createdAt,
+        row.updatedAt,
+      ],
+    )
+  }
+
+  // Upsert raw relationship by id — ON CONFLICT DO NOTHING
+  async upsertRelationshipRaw(row: Relationship): Promise<void> {
+    await this.db.query(
+      `INSERT INTO relationships(id, brain_id, source_leaf_id, target_leaf_id, type, confidence, metadata, created_at)
+       VALUES($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        row.id,
+        row.brainId,
+        row.sourceLeafId,
+        row.targetLeafId,
+        row.type,
+        row.confidence ?? null,
+        row.metadata !== undefined ? JSON.stringify(row.metadata) : null,
+        row.createdAt,
+      ],
+    )
+  }
+
+  // Upsert raw evidence by id — ON CONFLICT DO NOTHING
+  async upsertEvidenceRaw(row: EvidenceRef): Promise<void> {
+    await this.db.query(
+      `INSERT INTO evidence(id, brain_id, leaf_id, asset_id, chunk_id, citation, relation, strength, extraction_confidence, created_at)
+       VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        row.id,
+        row.brainId,
+        row.leafId,
+        row.assetId,
+        row.chunkId ?? null,
+        row.citation ?? null,
+        row.relation,
+        row.strength,
+        row.extractionConfidence,
+        row.createdAt,
+      ],
+    )
+  }
+
+  // Upsert raw asset by id — ON CONFLICT DO NOTHING
+  async upsertAssetRaw(row: Asset): Promise<void> {
+    await this.db.query(
+      `INSERT INTO assets(id, brain_id, type, title, uri, checksum, metadata, created_at)
+       VALUES($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        row.id,
+        row.brainId,
+        row.type,
+        row.title,
+        row.uri,
+        row.checksum,
+        row.metadata !== undefined ? JSON.stringify(row.metadata) : null,
+        row.createdAt,
+      ],
+    )
+  }
+
+  // Insert raw event by id — ON CONFLICT DO NOTHING
+  async insertEventRaw(row: LeafEvent): Promise<void> {
+    await this.db.query(
+      `INSERT INTO leaf_events(id, brain_id, leaf_id, type, payload, created_at)
+       VALUES($1, $2, $3, $4, $5::jsonb, $6)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        row.id,
+        row.brainId,
+        row.leafId,
+        row.type,
+        JSON.stringify(row.payload),
+        row.createdAt,
+      ],
+    )
   }
 
   // ── Health ─────────────────────────────────────────────────────────────────

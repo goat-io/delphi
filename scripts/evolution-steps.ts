@@ -770,6 +770,28 @@ export class CommitStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
     }
 
     const commitMsg = `evolve(cycle ${cycle}): ${(state.taskTitle ?? '').slice(0, 60)}\n\nTask: ${state.taskId}\nTrigger: ${state.trigger}\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
+
+    // Export brain JSONL so brain/*.jsonl deltas are staged in the same commit
+    {
+      const exportDataDir = resolve(
+        cwd,
+        process.env.DELPHI_DATA_DIR ?? '.delphi/brain',
+      )
+      const exportDb = await createDb({ dataDir: exportDataDir })
+      await migrate(exportDb)
+      const exportStore = new BrainStore(exportDb)
+      try {
+        const exportBrain_ = await exportStore.getBrainByName('delphi')
+        if (exportBrain_) {
+          const { exportBrain: doExport } = await import('./brain-store-io.js')
+          await doExport(exportStore, exportBrain_.id, resolve(cwd, 'brain'))
+          console.log(`[commit] Brain JSONL exported to brain/`)
+        }
+      } finally {
+        await exportDb.close()
+      }
+    }
+
     spawnSync('git', ['add', '-A'], { cwd, encoding: 'utf8' })
     spawnSync('git', ['commit', '-m', commitMsg], {
       cwd,

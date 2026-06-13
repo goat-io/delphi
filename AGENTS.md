@@ -541,6 +541,16 @@ Search Projections
 
 ---
 
+# Versioned Brain Directory
+
+`brain/` — versioned canonical Brain export (JSONL files: leaves, relationships, evidence, assets, events). Committed to git and diffable.
+
+`.delphi/` — local runtime cache (PGlite files, engine state). Gitignored. Rebuilt from `brain/` on bootstrap.
+
+Bootstrap sequence: `importBrain(brain/)` → re-ingest markdown → seed regions/goals → regenerate indexes/maps → `exportBrain(brain/)`.
+
+---
+
 # Retrieval Model
 
 Question

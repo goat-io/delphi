@@ -13,6 +13,7 @@ import {
 } from '@goatlab/delphi-indexer'
 import { ingestFile } from '@goatlab/delphi-ingestion'
 import { BrainStore, createDb, migrate } from '@goatlab/delphi-knowledge'
+import { exportBrain, importBrain } from './brain-store-io.js'
 import { seedGoals } from './goals.js'
 import { seedRubrics } from './rubrics.js'
 
@@ -76,6 +77,16 @@ export async function bootstrapBrain(opts: {
     log(`[bootstrap] Reusing existing brain: ${brain.id}`)
   }
   const brainId = brain.id
+
+  // 2b. Import committed canonical knowledge first (idempotent restore)
+  const importCounts = await importBrain(
+    store,
+    brainId,
+    resolve(repoRoot, 'brain'),
+  )
+  log(
+    `[bootstrap] Imported: leaves=${importCounts.leaves} rels=${importCounts.relationships} evidence=${importCounts.evidence} assets=${importCounts.assets} events=${importCounts.events}`,
+  )
 
   // 3. Seed regions
   const regions = await ensureSeededRegions(store, brainId, [...SEEDED_REGIONS])
@@ -282,6 +293,16 @@ export async function bootstrapBrain(opts: {
 
   log('[bootstrap] Generating maps...')
   await generateMaps(store, brainId)
+
+  // Export canonical knowledge back to brain/ directory
+  const exportCounts = await exportBrain(
+    store,
+    brainId,
+    resolve(repoRoot, 'brain'),
+  )
+  log(
+    `[bootstrap] Exported: leaves=${exportCounts.leaves} rels=${exportCounts.relationships} evidence=${exportCounts.evidence} assets=${exportCounts.assets} events=${exportCounts.events}`,
+  )
 
   // Print index summaries
   if (!quiet && indexes.length > 0) {
