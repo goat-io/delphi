@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./Delphi.png" alt="Delphi" width="100%" />
+</p>
+
 # Delphi
 
 **A framework for building self-evolving systems.**
