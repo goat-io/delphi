@@ -1,6 +1,7 @@
 import type { Candidate, Chunk } from '@goatlab/delphi-protocol'
 import { CandidateSchema, newId } from '@goatlab/delphi-protocol'
 import type { Extractor } from './extractor.js'
+import { isNoiseQuestion } from './questions.js'
 
 const OBJECT_STOPLIST = new Set([
   'The',
@@ -75,7 +76,8 @@ export class HeuristicExtractor implements Extractor {
       if (
         sentence.endsWith('?') &&
         sentence.length >= 12 &&
-        sentence.length <= 200
+        sentence.length <= 200 &&
+        !isNoiseQuestion(sentence)
       ) {
         const title = sentence.trim().slice(0, 120)
         const raw = {

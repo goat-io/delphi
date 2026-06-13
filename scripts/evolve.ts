@@ -1,5 +1,6 @@
 // pnpm evolve [--list | --close <taskId> --evidence "<ref>"]
 
+import { isNoiseQuestion } from '@goatlab/delphi-extraction'
 import { ensureSeededRegions } from '@goatlab/delphi-indexer'
 import { BrainStore, createDb, migrate } from '@goatlab/delphi-knowledge'
 import type { Leaf } from '@goatlab/delphi-protocol'
@@ -251,10 +252,7 @@ export async function scanDebt(
       if (t.length <= 25) {
         return false
       }
-      if (t.startsWith('-') || t.startsWith('Core questions')) {
-        return false
-      }
-      if (t.trim().split(/\s+/).length < 4) {
+      if (isNoiseQuestion(t)) {
         return false
       }
       return true
