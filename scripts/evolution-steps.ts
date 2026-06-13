@@ -1011,6 +1011,57 @@ export class VerifyClosureStep extends FunctionStep<
       const closureMet =
         !stillPresent || researchAdded || rfcAdded || queuedTaskDone
 
+      // For non-QUEUED_TASK triggers (SPEC_GAP, OPEN_QUESTION, etc.) persist a closure
+      // EVALUATION leaf so every closure outcome is rubric-backed (best-effort).
+      // QUEUED_TASK already persists its own fine-grained evaluation in the block above.
+      if (state.trigger !== 'QUEUED_TASK') {
+        try {
+          const closureRubric = await getRubricByTitle(
+            store,
+            brainId,
+            'Task Closure Rubric',
+          )
+          if (closureRubric && state.taskId) {
+            const artifactPresent = rfcAdded || researchAdded || !stillPresent
+            const workOk = state.hasWorkComplete ?? false
+            const closureScores = [
+              {
+                criterionId: 'files-committed',
+                score: artifactPresent ? 1 : 0,
+                rationale: artifactPresent
+                  ? 'Closure artifact present (RFC, research file, or debt resolved)'
+                  : 'No closure artifact found in this cycle',
+              },
+              {
+                criterionId: 'work-complete',
+                score: workOk ? 1 : 0,
+                rationale: workOk
+                  ? 'WORK COMPLETE marker present in agent output'
+                  : 'WORK COMPLETE marker absent from agent output',
+              },
+            ]
+            const closureFinalScore =
+              closureScores.reduce((s, c) => s + c.score, 0) /
+              closureScores.length
+            await persistEvaluation(store, brainId, {
+              rubricId: closureRubric.id,
+              targetLeafId: state.taskId,
+              perspective: 'task-closure',
+              scores: closureScores,
+              finalScore: closureFinalScore,
+              verdict: closureMet ? 'approve' : 'reject',
+              rationale: closureMet
+                ? `Closure verified for trigger ${state.trigger}`
+                : `Closure UNVERIFIED for trigger ${state.trigger}: stillPresent=${stillPresent} artifactPresent=${artifactPresent}`,
+            }).catch(() => {
+              /* best-effort */
+            })
+          }
+        } catch {
+          // non-fatal: evaluation persistence must not block cycle closure
+        }
+      }
+
       if (closureMet) {
         const existing = await store.getLeaf(state.taskId!)
         await store.updateLeaf(state.taskId!, {

@@ -405,6 +405,114 @@ describe('rubrics', () => {
     expect(scoreArr[0]!.score).toBeCloseTo(reviewScore)
   })
 
+  it('7c. verify-closure: SPEC_GAP closure persists EVALUATION leaf via Task Closure Rubric', async () => {
+    await seedRubrics(store, brainId)
+
+    const specGapLeaf = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'ACTIVE',
+      title: 'SPEC_GAP closure regression target',
+      aliases: [],
+      tags: ['test', 'spec-gap'],
+    })
+
+    const rubricLeaf = await getRubricByTitle(
+      store,
+      brainId,
+      'Task Closure Rubric',
+    )
+    expect(rubricLeaf).not.toBeNull()
+
+    // Simulate SPEC_GAP where no RFC was added — closure UNVERIFIED
+    const rfcAdded = false
+    const workComplete = false
+    const closureScores = [
+      {
+        criterionId: 'files-committed',
+        score: rfcAdded ? 1 : 0,
+        rationale: rfcAdded
+          ? 'Closure artifact present (RFC, research file, or debt resolved)'
+          : 'No closure artifact found in this cycle',
+      },
+      {
+        criterionId: 'work-complete',
+        score: workComplete ? 1 : 0,
+        rationale: workComplete
+          ? 'WORK COMPLETE marker present in agent output'
+          : 'WORK COMPLETE marker absent from agent output',
+      },
+    ]
+    const closureFinalScore =
+      closureScores.reduce((s, c) => s + c.score, 0) / closureScores.length
+
+    const evalLeaf = await persistEvaluation(store, brainId, {
+      rubricId: rubricLeaf!.id,
+      targetLeafId: specGapLeaf.id,
+      perspective: 'task-closure',
+      scores: closureScores,
+      finalScore: closureFinalScore,
+      verdict: 'reject',
+      rationale:
+        'Closure UNVERIFIED for trigger SPEC_GAP: stillPresent=true artifactPresent=false',
+    })
+
+    expect(evalLeaf.kind).toBe('EVALUATION')
+    expect(evalLeaf.title).toContain('task-closure')
+    const content = evalLeaf.content as Record<string, unknown>
+    expect(content.verdict).toBe('reject')
+    expect(content.finalScore).toBeCloseTo(0.0)
+    expect(content.rubricId).toBe(rubricLeaf!.id)
+    expect(content.targetLeafId).toBe(specGapLeaf.id)
+
+    const scores = content.scores as Array<{
+      criterionId: string
+      score: number
+    }>
+    expect(scores).toHaveLength(2)
+    expect(scores.find(s => s.criterionId === 'files-committed')?.score).toBe(0)
+    expect(scores.find(s => s.criterionId === 'work-complete')?.score).toBe(0)
+
+    // Simulate SPEC_GAP where RFC WAS added — closure VERIFIED
+    const specGapLeaf2 = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'ACTIVE',
+      title: 'SPEC_GAP closure regression target (rfc added)',
+      aliases: [],
+      tags: ['test', 'spec-gap'],
+    })
+
+    const closureScores2 = [
+      {
+        criterionId: 'files-committed',
+        score: 1,
+        rationale:
+          'Closure artifact present (RFC, research file, or debt resolved)',
+      },
+      {
+        criterionId: 'work-complete',
+        score: 1,
+        rationale: 'WORK COMPLETE marker present in agent output',
+      },
+    ]
+
+    const evalLeaf2 = await persistEvaluation(store, brainId, {
+      rubricId: rubricLeaf!.id,
+      targetLeafId: specGapLeaf2.id,
+      perspective: 'task-closure',
+      scores: closureScores2,
+      finalScore: 1.0,
+      verdict: 'approve',
+      rationale: 'Closure verified for trigger SPEC_GAP',
+    })
+
+    expect(evalLeaf2.kind).toBe('EVALUATION')
+    const content2 = evalLeaf2.content as Record<string, unknown>
+    expect(content2.verdict).toBe('approve')
+    expect(content2.finalScore).toBeCloseTo(1.0)
+  })
+
   it('7b. verify-closure: QUEUED_TASK with no files committed → reject verdict persisted', async () => {
     await seedRubrics(store, brainId)
 
