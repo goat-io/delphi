@@ -257,6 +257,44 @@ const STANDING_RUBRICS: Array<{ title: string; content: RubricContent }> = [
       ],
     },
   },
+  {
+    title: 'Candidate Resolution Rubric',
+    content: {
+      criteria: [
+        {
+          id: 'flagged-ratio-acceptable',
+          name: 'Flagged ratio acceptable',
+          description:
+            'Fraction of candidates flagged for low confidence must be ≤ 0.3; score scales linearly above that',
+          weight: 0.5,
+          scoringRange: { min: 0, max: 1 },
+        },
+        {
+          id: 'candidate-yield',
+          name: 'Candidate yield',
+          description:
+            'At least one candidate was extracted from the asset chunks',
+          weight: 0.3,
+          scoringRange: { min: 0, max: 1 },
+        },
+        {
+          id: 'resolution-completeness',
+          name: 'Resolution completeness',
+          description:
+            'All extracted candidates reached a terminal resolution (created + merged + linked + flagged = candidates)',
+          weight: 0.2,
+          scoringRange: { min: 0, max: 1 },
+        },
+      ],
+      scoringMethod: 'WEIGHTED',
+      qualityGate: 0.7,
+      rejectGate: 0.4,
+      derivedFrom: [
+        'RFC-0027 §Extraction-and-Entity-Resolution',
+        'UNVERIFIED_CLOSURE: leaf_4bd155626a5f4592b99aaf00 — candidate gate must read RUBRIC + persist EVALUATION',
+      ],
+    },
+  },
 ]
 
 // ── seedRubrics ───────────────────────────────────────────────────────────────
