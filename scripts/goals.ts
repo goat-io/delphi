@@ -46,10 +46,11 @@ const STANDING_GOALS: Array<{
     title: 'Average confidence above 0.5',
     content: { metric: 'avgConfidence', target: 0.5, comparator: '>=' },
   },
-  {
-    title: 'No unattended loop anomalies',
-    content: { metric: 'loopAnomalies', target: 0, comparator: '==' },
-  },
+  // NOTE: "No unattended loop anomalies" was removed — it was a circular goal.
+  // Its metric counts the maintenance tasks, but satisfying it requires CLOSING
+  // those tasks, which sit below it in priority; the goal therefore got picked
+  // repeatedly while the tasks that resolve it never ran. Loop-anomaly count is
+  // a health metric (brain health / introspection), not a prioritized goal.
 ]
 
 // ── seedGoals ────────────────────────────────────────────────────────────────
@@ -133,19 +134,6 @@ export async function evaluateGoals(
         return health.openQuestions
       case 'avgConfidence':
         return health.avgConfidence ?? 0
-      case 'loopAnomalies':
-        // Metric counts ACTIVE loop-defect tasks tagged 'auto-detected'.
-        // Fresh anomaly scan deduplication means this is a reliable proxy:
-        // emitDefectTasks creates at most one ACTIVE task per anomaly class,
-        // so the count here accurately reflects unattended loop anomaly classes.
-        // We avoid importing scanLoopAnomalies here to prevent a circular dep
-        // (goals.ts ← evolve.ts ← introspect would cycle back through goals.ts).
-        return leaves.filter(
-          l =>
-            l.kind === 'TASK' &&
-            l.status === 'ACTIVE' &&
-            (l.tags ?? []).includes('auto-detected'),
-        ).length
       default:
         return 0
     }

@@ -38,13 +38,13 @@ afterAll(async () => {
 })
 
 describe('governance bridge', () => {
-  it('1. seedGoals: creates 6 goal leaves idempotently in Objectives region', async () => {
+  it('1. seedGoals: creates 5 goal leaves idempotently in Objectives region', async () => {
     const first = await seedGoals(store, brainId)
-    expect(first.length).toBe(6)
+    expect(first.length).toBe(5)
 
     // Second call must not create duplicates
     const second = await seedGoals(store, brainId)
-    expect(second.length).toBe(6)
+    expect(second.length).toBe(5)
 
     // Titles should match
     const titles = second.map(l => l.title)
@@ -53,7 +53,6 @@ describe('governance bridge', () => {
     expect(titles).toContain('No stale indexes')
     expect(titles).toContain('Open questions triaged below 150')
     expect(titles).toContain('Average confidence above 0.5')
-    expect(titles).toContain('No unattended loop anomalies')
 
     // IDs must be the same on both calls (idempotency)
     for (let i = 0; i < first.length; i++) {

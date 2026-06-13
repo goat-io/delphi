@@ -196,8 +196,11 @@ describe('introspect harness', () => {
     await store2.db.close()
   })
 
-  it('5. Meta-goal: evaluateGoals reports loopAnomalies unmet when a DISPUTED task exists', async () => {
-    // Create a fresh brain for goal evaluation isolation
+  it('5. No circular loopAnomalies goal — anomaly count is a health metric, not a competing goal', async () => {
+    // The "No unattended loop anomalies" goal was removed: it was circular
+    // (satisfied only by closing maintenance tasks that ranked below it, so it
+    // got picked repeatedly while its own resolution never ran). seedGoals must
+    // NOT emit it, while introspection still DETECTS anomalies (see tests 1-4).
     const tmpDir3 = await mkdtemp(join(tmpdir(), 'delphi-goals-'))
     const db3 = await createDb({ dataDir: tmpDir3 })
     await migrate(db3)
@@ -205,40 +208,18 @@ describe('introspect harness', () => {
     const brain3 = await store3.createBrain('delphi-goals', 'Goals test brain')
     const brainId3 = brain3.id
 
-    // Seed goals (including the new loopAnomalies goal)
     await seedGoals(store3, brainId3)
-
-    // Create an auto-detected ACTIVE TASK to simulate an unattended anomaly
-    // (emitDefectTasks would produce this; we create it directly for isolation)
-    await store3.createLeaf({
-      brainId: brainId3,
-      kind: 'TASK',
-      status: 'ACTIVE',
-      title: '[loop-defect] DISPUTED_TASK: disputed:some_leaf_id',
-      aliases: [],
-      tags: ['loop-defect', 'auto-detected'],
-      content: {
-        trigger: 'HUMAN_REQUEST',
-        queued: true,
-        target: 'disputed:some_leaf_id',
-        priority: 92,
-        origin: 'introspection',
-        anomalyKind: 'DISPUTED_TASK',
-        evidence: 'brain:leaf:some_leaf_id',
-        closureCriteria:
-          'anomaly class no longer reproduced in a subsequent run + regression coverage',
-      },
-    })
-
     const results = await evaluateGoals(store3, brainId3)
+
     const loopGoal = results.find(r => {
       const c = r.goal.content as { metric?: string } | undefined
       return c?.metric === 'loopAnomalies'
     })
-
-    expect(loopGoal).toBeDefined()
-    expect(loopGoal?.met).toBe(false)
-    expect(loopGoal?.current).toBeGreaterThan(0)
+    expect(loopGoal).toBeUndefined()
+    // Forward goals remain
+    expect(
+      results.some(r => r.goal.title === 'Open questions triaged below 150'),
+    ).toBe(true)
 
     await store3.db.close()
   })
