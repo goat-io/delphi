@@ -1118,6 +1118,75 @@ export class VerifyClosureStep extends FunctionStep<
         closureStatus: 'DISPUTED',
         healthAfterStr: state.healthBeforeStr ?? '',
       })
+
+      // Persist EVALUATION leaf against "Disputed Cycle Rubric" (best-effort).
+      // This is the closure criterion: the disputed gate must read from a RUBRIC
+      // leaf and persist EVALUATION leaves (loop:2026-06-13T16:57:36.315Z fix).
+      if (state.taskId) {
+        const disputeDataDir = resolve(
+          cwd,
+          process.env.DELPHI_DATA_DIR ?? '.delphi/brain',
+        )
+        const disputeDb = await createDb({ dataDir: disputeDataDir })
+        await migrate(disputeDb)
+        const disputeStore = new BrainStore(disputeDb)
+        try {
+          const disputeBrain = await disputeStore
+            .getBrainByName('delphi')
+            .catch(() => null)
+          if (disputeBrain) {
+            const rubric = await getRubricByTitle(
+              disputeStore,
+              disputeBrain.id,
+              'Disputed Cycle Rubric',
+            ).catch(() => null)
+            const rubricId = rubric?.id ?? 'disputed-cycle-rubric'
+
+            const hasReason = !!(
+              (state.guardReasons?.length ?? 0) > 0 ||
+              (state.reviewReasons?.length ?? 0) > 0 ||
+              state.gateOutput
+            )
+            const isTerminal = state.terminalReject === true
+
+            const reasonScore = hasReason ? 1 : 0
+            // 1.0 if correctly terminal-classified; 0.5 if unknown (non-terminal dispute)
+            const terminalScore = isTerminal ? 1 : 0.5
+
+            const finalScore = 0.5 * reasonScore + 0.5 * terminalScore
+
+            await persistEvaluation(disputeStore, disputeBrain.id, {
+              rubricId,
+              targetLeafId: state.taskId,
+              perspective: 'disputed-cycle',
+              scores: [
+                {
+                  criterionId: 'dispute-reason-recorded',
+                  score: reasonScore,
+                  rationale: hasReason
+                    ? 'Dispute reason captured in cycle state (guard/review reasons or gate output)'
+                    : 'No dispute reason found in cycle state',
+                },
+                {
+                  criterionId: 'terminal-correctly-classified',
+                  score: terminalScore,
+                  rationale: isTerminal
+                    ? 'Dispute correctly classified as terminal-reject (correct refusal — will not re-queue)'
+                    : 'Dispute not flagged terminal — may surface as DISPUTED_TASK anomaly for retry',
+                },
+              ],
+              finalScore,
+              verdict: finalScore >= 0.5 ? 'approve' : 'reject',
+              rationale: `Cycle DISPUTED: gateGreen=${state.gateGreenResult ?? false} terminalReject=${isTerminal} hasReason=${hasReason}`,
+            }).catch(() => {
+              /* best-effort */
+            })
+          }
+        } finally {
+          await disputeDb.close()
+        }
+      }
+
       return doneOutput(runId, input.cycle)
     }
 

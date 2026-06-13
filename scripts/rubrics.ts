@@ -385,6 +385,36 @@ const STANDING_RUBRICS: Array<{ title: string; content: RubricContent }> = [
       ],
     },
   },
+  {
+    title: 'Disputed Cycle Rubric',
+    content: {
+      criteria: [
+        {
+          id: 'dispute-reason-recorded',
+          name: 'Dispute reason recorded',
+          description:
+            'A meaningful reason for the dispute is captured in the cycle state (guard reasons, review reasons, or gate output)',
+          weight: 0.5,
+          scoringRange: { min: 0, max: 1 },
+        },
+        {
+          id: 'terminal-correctly-classified',
+          name: 'Terminal correctly classified',
+          description:
+            'Correct refusals (arbiter/review REJECT) are flagged terminalReject=true so they do not re-queue as anomalies',
+          weight: 0.5,
+          scoringRange: { min: 0, max: 1 },
+        },
+      ],
+      scoringMethod: 'WEIGHTED',
+      qualityGate: 0.5,
+      rejectGate: 0.0,
+      derivedFrom: [
+        'DISPUTED_TASK: log:2026-06-13T16:57:36.315Z:DISPUTED — verify-closure disputed path must read RUBRIC + persist EVALUATION',
+        'RFC-0005 §Governance-and-Evaluation',
+      ],
+    },
+  },
 ]
 
 // ── seedRubrics ───────────────────────────────────────────────────────────────

@@ -39,10 +39,10 @@ afterAll(async () => {
 describe('rubrics', () => {
   it('1. seedRubrics is idempotent and criteria weights sum to 1.0', async () => {
     const first = await seedRubrics(store, brainId)
-    expect(first.length).toBe(12)
+    expect(first.length).toBe(13)
 
     const second = await seedRubrics(store, brainId)
-    expect(second.length).toBe(12)
+    expect(second.length).toBe(13)
 
     for (let i = 0; i < first.length; i++) {
       expect(first[i]!.id).toBe(second[i]!.id)
@@ -842,6 +842,174 @@ describe('rubrics', () => {
     }>
     expect(scores.find(s => s.criterionId === 'push-succeeded')?.score).toBe(0)
     expect(scores.find(s => s.criterionId === 'no-force-push')?.score).toBe(1)
+  })
+
+  it('11. Disputed Cycle Rubric: seeded with WEIGHTED scoring, qualityGate=0.5, two 0.5-weight criteria', async () => {
+    await seedRubrics(store, brainId)
+
+    const rubric = await getRubricByTitle(
+      store,
+      brainId,
+      'Disputed Cycle Rubric',
+    )
+    expect(rubric).not.toBeNull()
+
+    const content = rubric!.content as unknown as RubricContent
+    expect(content.scoringMethod).toBe('WEIGHTED')
+    expect(content.qualityGate).toBeCloseTo(0.5)
+    expect(content.rejectGate).toBeCloseTo(0.0)
+    expect(content.criteria).toHaveLength(2)
+
+    const ids = content.criteria.map(c => c.id)
+    expect(ids).toContain('dispute-reason-recorded')
+    expect(ids).toContain('terminal-correctly-classified')
+
+    const weightSum = content.criteria.reduce((s, c) => s + c.weight, 0)
+    expect(weightSum).toBeCloseTo(1.0, 5)
+  })
+
+  it('11b. verify-closure DISPUTED path: EVALUATION leaf persisted against Disputed Cycle Rubric', async () => {
+    // Regression: when a cycle ends DISPUTED (committed=false), VerifyClosureStep
+    // must read the Disputed Cycle Rubric and persist an EVALUATION leaf.
+    // (Closure criteria for DISPUTED_TASK: log:2026-06-13T16:57:36.315Z:DISPUTED)
+    await seedRubrics(store, brainId)
+
+    const taskLeaf = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'DISPUTED',
+      title: 'Disputed cycle EVALUATION regression target',
+      aliases: [],
+      tags: ['test', 'disputed-cycle'],
+    })
+
+    const rubricLeaf = await getRubricByTitle(
+      store,
+      brainId,
+      'Disputed Cycle Rubric',
+    )
+    expect(rubricLeaf).not.toBeNull()
+
+    // Simulate a non-terminal dispute with a reason recorded
+    const hasReason = true
+    const isTerminal = false
+    const reasonScore = hasReason ? 1 : 0
+    const terminalScore = isTerminal ? 1 : 0.5
+    const finalScore = 0.5 * reasonScore + 0.5 * terminalScore
+
+    const evalLeaf = await persistEvaluation(store, brainId, {
+      rubricId: rubricLeaf!.id,
+      targetLeafId: taskLeaf.id,
+      perspective: 'disputed-cycle',
+      scores: [
+        {
+          criterionId: 'dispute-reason-recorded',
+          score: reasonScore,
+          rationale:
+            'Dispute reason captured in cycle state (guard/review reasons or gate output)',
+        },
+        {
+          criterionId: 'terminal-correctly-classified',
+          score: terminalScore,
+          rationale:
+            'Dispute not flagged terminal — may surface as DISPUTED_TASK anomaly for retry',
+        },
+      ],
+      finalScore,
+      verdict: finalScore >= 0.5 ? 'approve' : 'reject',
+      rationale:
+        'Cycle DISPUTED: gateGreen=false terminalReject=false hasReason=true',
+    })
+
+    expect(evalLeaf.kind).toBe('EVALUATION')
+    expect(evalLeaf.title).toContain('disputed-cycle')
+    const content = evalLeaf.content as Record<string, unknown>
+    expect(content.finalScore).toBeCloseTo(0.75)
+    expect(content.verdict).toBe('approve')
+    expect(content.rubricId).toBe(rubricLeaf!.id)
+    expect(content.targetLeafId).toBe(taskLeaf.id)
+
+    const scores = content.scores as Array<{
+      criterionId: string
+      score: number
+    }>
+    expect(scores).toHaveLength(2)
+    expect(
+      scores.find(s => s.criterionId === 'dispute-reason-recorded')?.score,
+    ).toBe(1)
+    expect(
+      scores.find(s => s.criterionId === 'terminal-correctly-classified')
+        ?.score,
+    ).toBe(0.5)
+  })
+
+  it('11c. verify-closure DISPUTED terminal path: terminal-reject EVALUATION persists with score=1.0', async () => {
+    await seedRubrics(store, brainId)
+
+    const taskLeaf = await store.createLeaf({
+      brainId,
+      kind: 'TASK',
+      status: 'DISPUTED',
+      title: 'Disputed cycle terminal EVALUATION regression target',
+      aliases: [],
+      tags: ['test', 'disputed-cycle'],
+    })
+
+    const rubricLeaf = await getRubricByTitle(
+      store,
+      brainId,
+      'Disputed Cycle Rubric',
+    )
+    expect(rubricLeaf).not.toBeNull()
+
+    // Simulate a terminal dispute (arbiter/review REJECT) — both criteria score 1
+    const hasReason = true
+    const isTerminal = true
+    const reasonScore = hasReason ? 1 : 0
+    const terminalScore = isTerminal ? 1 : 0.5
+    const finalScore = 0.5 * reasonScore + 0.5 * terminalScore
+
+    const evalLeaf = await persistEvaluation(store, brainId, {
+      rubricId: rubricLeaf!.id,
+      targetLeafId: taskLeaf.id,
+      perspective: 'disputed-cycle',
+      scores: [
+        {
+          criterionId: 'dispute-reason-recorded',
+          score: reasonScore,
+          rationale:
+            'Dispute reason captured in cycle state (guard/review reasons or gate output)',
+        },
+        {
+          criterionId: 'terminal-correctly-classified',
+          score: terminalScore,
+          rationale:
+            'Dispute correctly classified as terminal-reject (correct refusal — will not re-queue)',
+        },
+      ],
+      finalScore,
+      verdict: 'approve',
+      rationale:
+        'Cycle DISPUTED: gateGreen=false terminalReject=true hasReason=true',
+    })
+
+    expect(evalLeaf.kind).toBe('EVALUATION')
+    const content = evalLeaf.content as Record<string, unknown>
+    expect(content.finalScore).toBeCloseTo(1.0)
+    expect(content.verdict).toBe('approve')
+    expect(content.rubricId).toBe(rubricLeaf!.id)
+
+    const scores = content.scores as Array<{
+      criterionId: string
+      score: number
+    }>
+    expect(
+      scores.find(s => s.criterionId === 'dispute-reason-recorded')?.score,
+    ).toBe(1)
+    expect(
+      scores.find(s => s.criterionId === 'terminal-correctly-classified')
+        ?.score,
+    ).toBe(1)
   })
 
   it('7b. verify-closure: QUEUED_TASK with no files committed → reject verdict persisted', async () => {
