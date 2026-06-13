@@ -398,3 +398,17 @@ Automatically maintained by `pnpm evolve:loop`.
 | Closure | DISPUTED |
 | Health before | leaves=1273 beliefs=687 evidence=2354 openQ=99 |
 | Health after | leaves=1273 beliefs=687 evidence=2354 openQ=99 |
+<!-- daemon 2026-06-13T18:18:36.292Z daemon starting interval=1min maxPerDay=12 executor=headless -->
+## Cycle 1 — 2026-06-13T18:22:08.274Z
+
+| Field | Value |
+|-------|-------|
+| Task | leaf_3f8f5cf1dd6c4bbdbc0f6ddf — [SPEC_GAP] Neutralize arbiter-rejected SPEC_GAP sources so they stop re-dispatching |
+| Trigger | SPEC_GAP |
+| Agent summary | WORK COMPLETE: drafted RFC-0032 (Evolution Loop & Arbiter-Rejection Protocol) defining the SPEC_GAP task type, multi-perspective evaluation, arbiter verdict, source neutralization registry, and three livelock-prevention invariants; updated RFC-9999 reading order (Phase 11), dependency graph, and spec status line to reference RFC-0032. | guard=allow requiresReview=true | review=needs_human score=0.60 [redundancy rejected: Topic overlap detected with existing RFCs (8 heading matches in: rfcs/RFC-0017-Implementation-Roadmap.md, rfcs/RFC-0032-Evolution-Loop-and-Arbiter-Rejection-Protocol.md). This RFC may duplicate existing coverage..; Weighted approval 0.60 is inconclusive — escalating to a human.] |
+| Gate | DISPUTED |
+| Commit | 9b876e2 |
+| Closure | DISPUTED |
+| Health before | leaves=1276 beliefs=687 evidence=2354 openQ=99 |
+| Health after | leaves=1276 beliefs=687 evidence=2354 openQ=99 |
+| Dispute | terminal-reject |
