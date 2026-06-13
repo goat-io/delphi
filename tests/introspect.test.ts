@@ -256,6 +256,68 @@ describe('introspect harness', () => {
     await store.updateLeaf(autoDetectedUnverified.id, { status: 'ARCHIVED' })
   })
 
+  it('7. arbiter EVALUATION resolves NEEDS_HUMAN_UNRESOLVED without a DECISION leaf', async () => {
+    // Regression: when arbiter handles a needs_human verdict it persists an EVALUATION
+    // with perspective='arbiter'. The anomaly scanner must recognise this as resolution
+    // evidence — no separate DECISION leaf should be required.
+
+    const arbiterTarget = 'arbiter_resolution_target_leaf'
+
+    // Create the needs_human EVALUATION (what triggered the anomaly)
+    const evalLeaf = await store.createLeaf({
+      brainId,
+      kind: 'EVALUATION',
+      status: 'ACTIVE',
+      title: 'spec-coherence evaluation for arbiter_resolution_target_leaf',
+      aliases: [],
+      tags: ['evaluation', 'governance', 'spec-coherence'],
+      content: {
+        verdict: 'needs_human',
+        targetLeafId: arbiterTarget,
+        perspective: 'spec-coherence',
+        finalScore: 0.5,
+      },
+    })
+
+    // Without arbiter → anomaly must be present
+    const anomaliesBefore = await scanLoopAnomalies(store, brainId)
+    const matchBefore = anomaliesBefore.find(
+      a =>
+        a.kind === 'NEEDS_HUMAN_UNRESOLVED' &&
+        a.signature === `needs-human:${arbiterTarget}:spec-coherence`,
+    )
+    expect(matchBefore).toBeDefined()
+
+    // Arbiter approves — persists EVALUATION (perspective='arbiter') not a DECISION
+    const arbiterEval = await store.createLeaf({
+      brainId,
+      kind: 'EVALUATION',
+      status: 'ACTIVE',
+      title: 'Evaluation: arbiter on arbiter_resolution_target_leaf',
+      aliases: [],
+      tags: ['evaluation', 'governance', 'arbiter'],
+      content: {
+        verdict: 'approve',
+        targetLeafId: arbiterTarget,
+        perspective: 'arbiter',
+        finalScore: 1,
+      },
+    })
+
+    // With arbiter EVALUATION present → anomaly must be gone
+    const anomaliesAfter = await scanLoopAnomalies(store, brainId)
+    const matchAfter = anomaliesAfter.find(
+      a =>
+        a.kind === 'NEEDS_HUMAN_UNRESOLVED' &&
+        a.signature === `needs-human:${arbiterTarget}:spec-coherence`,
+    )
+    expect(matchAfter).toBeUndefined()
+
+    // Clean up
+    await store.updateLeaf(evalLeaf.id, { status: 'ARCHIVED' })
+    await store.updateLeaf(arbiterEval.id, { status: 'ARCHIVED' })
+  })
+
   it('5. No circular loopAnomalies goal — anomaly count is a health metric, not a competing goal', async () => {
     // The "No unattended loop anomalies" goal was removed: it was circular
     // (satisfied only by closing maintenance tasks that ranked below it, so it

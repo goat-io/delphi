@@ -509,7 +509,9 @@ export function makePerspectiveReviewer(
     defaultAssessment: 'approve',
   })
 
-  async function loadRubric(title: string): Promise<RubricContent | null> {
+  async function loadRubric(
+    title: string,
+  ): Promise<{ content: RubricContent; id: string } | null> {
     if (!store || !brainId) {
       return null
     }
@@ -518,7 +520,7 @@ export function makePerspectiveReviewer(
       if (!leaf) {
         return null
       }
-      return leaf.content as unknown as RubricContent
+      return { content: leaf.content as unknown as RubricContent, id: leaf.id }
     } catch {
       return null
     }
@@ -563,7 +565,9 @@ export function makePerspectiveReviewer(
       return BASE_EVALUATOR(input)
     }
 
-    const rubric = await loadRubric('RFC Redundancy Rubric')
+    const rubricEntry = await loadRubric('RFC Redundancy Rubric')
+    const rubric = rubricEntry?.content
+    const rubricLeafId = rubricEntry?.id
     const qualityGate = rubric?.qualityGate ?? 0.7
     const rejectGate = rubric?.rejectGate ?? 0.4
 
@@ -700,6 +704,7 @@ export function makePerspectiveReviewer(
         finalScore,
         qualityGate,
         rejectGate,
+        rubricLeafId,
       }
     }
 
@@ -715,6 +720,7 @@ export function makePerspectiveReviewer(
       finalScore,
       qualityGate,
       rejectGate,
+      rubricLeafId,
     }
   }
 
@@ -727,7 +733,9 @@ export function makePerspectiveReviewer(
       return BASE_EVALUATOR(input)
     }
 
-    const rubric = await loadRubric('Spec Coherence Rubric')
+    const rubricEntry = await loadRubric('Spec Coherence Rubric')
+    const rubric = rubricEntry?.content
+    const rubricLeafId = rubricEntry?.id
     const baseResult = await BASE_EVALUATOR(input)
 
     if (!rubric) {
@@ -790,6 +798,7 @@ export function makePerspectiveReviewer(
       qualityGate: rubric.qualityGate,
       rejectGate: rubric.rejectGate,
       verdict,
+      rubricLeafId,
     }
   }
 
@@ -802,7 +811,9 @@ export function makePerspectiveReviewer(
       return BASE_EVALUATOR(input)
     }
 
-    const rubric = await loadRubric('Change Scope Rubric')
+    const rubricEntry = await loadRubric('Change Scope Rubric')
+    const rubric = rubricEntry?.content
+    const rubricLeafId = rubricEntry?.id
     const baseResult = await BASE_EVALUATOR(input)
 
     if (!rubric) {
@@ -857,6 +868,7 @@ export function makePerspectiveReviewer(
       qualityGate: rubric.qualityGate,
       rejectGate: rubric.rejectGate,
       verdict,
+      rubricLeafId,
     }
   }
 

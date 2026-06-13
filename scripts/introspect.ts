@@ -94,7 +94,7 @@ export async function scanLoopAnomalies(
     }
   }
 
-  // ── 3. Brain: EVALUATION needs_human without follow-up DECISION ─────────────
+  // ── 3. Brain: EVALUATION needs_human without follow-up DECISION or arbiter ───
   const decisionLeaves = allLeaves.filter(l => l.kind === 'DECISION')
   const resolvedTargetIds = new Set(
     decisionLeaves
@@ -104,6 +104,23 @@ export async function scanLoopAnomalies(
       })
       .filter((id): id is string => id !== null),
   )
+
+  // Arbiter EVALUATION leaves (perspective='arbiter') resolve needs_human without
+  // a separate DECISION leaf — the arbiter IS the inside-boundary resolution mechanism.
+  for (const leaf of allLeaves) {
+    if (leaf.kind !== 'EVALUATION') {
+      continue
+    }
+    const c = (leaf.content ?? {}) as Record<string, unknown>
+    if (c.perspective !== 'arbiter') {
+      continue
+    }
+    const targetLeafId =
+      typeof c.targetLeafId === 'string' ? c.targetLeafId : null
+    if (targetLeafId) {
+      resolvedTargetIds.add(targetLeafId)
+    }
+  }
 
   for (const leaf of allLeaves) {
     if (leaf.kind !== 'EVALUATION') {

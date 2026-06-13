@@ -627,7 +627,16 @@ export class ReviewStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
       `[review] pid=${process.pid} workClass=${workClass} perspectives=[${perspectives.map(p => p.name).join(',')}] approveThreshold=${approveThreshold} rejectThreshold=${rejectThreshold}`,
     )
 
-    const reviewer = makePerspectiveReviewer(cwd)
+    // Load the brain now so the perspective reviewer can read RUBRIC leaves.
+    const reviewBrainObj = await evalStore
+      .getBrainByName('delphi')
+      .catch(() => null)
+
+    const reviewer = makePerspectiveReviewer(
+      cwd,
+      reviewBrainObj ? evalStore : undefined,
+      reviewBrainObj?.id,
+    )
     const decider = makeReviewDecider({ approveThreshold, rejectThreshold })
 
     const matrix = await reviewer.review(decision, perspectives)
@@ -635,7 +644,7 @@ export class ReviewStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
 
     // Persist one EVALUATION leaf per perspective + one for the final decision (best-effort)
     try {
-      const brain = await evalStore.getBrainByName('delphi').catch(() => null)
+      const brain = reviewBrainObj
       if (brain && state.taskId) {
         const evalBrainId = brain.id
         for (const verdict of matrix.verdicts) {
@@ -655,7 +664,8 @@ export class ReviewStep extends FunctionStep<DoneJsonObject, DoneJsonObject> {
                 ? 'reject'
                 : 'needs_human'
           await persistEvaluation(evalStore, evalBrainId, {
-            rubricId: `${verdict.perspective}-rubric`,
+            rubricId:
+              (verdict as any).rubricLeafId ?? `${verdict.perspective}-rubric`,
             targetLeafId: state.taskId,
             perspective: verdict.perspective,
             scores: cs,

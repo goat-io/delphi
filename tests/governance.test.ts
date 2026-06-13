@@ -15,6 +15,7 @@ import {
   makePerspectiveReviewer,
   makeReviewDecider,
 } from '../scripts/governance-bridge.js'
+import { seedRubrics } from '../scripts/rubrics.js'
 
 let store: BrainStore
 let brainId: string
@@ -282,6 +283,45 @@ describe('governance bridge', () => {
       expect(result.score).toBeLessThan(0.7)
       expect(result.score).toBeGreaterThan(0.3)
     }
+  })
+
+  it('10. spec-coherence with rubric loaded: uses criterion scores + propagates rubricLeafId', async () => {
+    // Regression: makePerspectiveReviewer must receive store+brainId so the Spec Coherence
+    // Rubric leaf is loaded and criterion-based scoring is used instead of the heuristic
+    // base evaluator. rubricLeafId must be present in the returned verdict.
+    await seedRubrics(store, brainId)
+
+    const repoRoot = resolve(import.meta.dirname ?? __dirname, '..')
+    const reviewer = makePerspectiveReviewer(repoRoot, store, brainId)
+
+    // Decision that mentions rfc-9999 — triggers keyword heuristic concern but
+    // should now produce a rubric-based score with populated criterionScores.
+    const decision: Decision = {
+      name: 'spec-gap-candidate',
+      kind: 'decision',
+      description: 'Add new RFC to rfc-9999 specification index',
+      status: 'proposed',
+      context: 'This RFC has a Status section and a Purpose section.',
+    }
+
+    const matrix = await reviewer.review(decision, [
+      { name: 'spec-coherence', weight: 1 },
+    ])
+
+    const scVerdict = matrix.verdicts.find(
+      (v: any) => v.perspective === 'spec-coherence',
+    )
+    expect(scVerdict).toBeDefined()
+    // Criterion scores must be populated (rubric was loaded)
+    expect((scVerdict as any).criterionScores?.length).toBeGreaterThan(0)
+    // rubricLeafId must reference the actual RUBRIC leaf, not the synthetic string
+    const rubricLeafId = (scVerdict as any).rubricLeafId
+    expect(rubricLeafId).toBeDefined()
+    expect(rubricLeafId).not.toBe('spec-coherence-rubric')
+    // finalScore must be a number between 0 and 1
+    expect(typeof (scVerdict as any).finalScore).toBe('number')
+    expect((scVerdict as any).finalScore).toBeGreaterThanOrEqual(0)
+    expect((scVerdict as any).finalScore).toBeLessThanOrEqual(1)
   })
 
   it('9. guardRequiresReview: trigger-based — QUEUED_TASK/SPEC_GAP need review; docs do not', () => {
