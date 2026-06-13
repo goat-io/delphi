@@ -1,25 +1,25 @@
 {
-  "generatedAt": "2026-06-13T20:27:50.251Z",
+  "generatedAt": "2026-06-13T20:45:39.032Z",
   "brainId": "brain_8c16f71c024d4c8c999e18b1",
   "health": {
-    "leaves": 2002,
-    "beliefs": 1235,
-    "evidence": 3905,
-    "relationships": 198,
+    "leaves": 2101,
+    "beliefs": 1312,
+    "evidence": 4092,
+    "relationships": 205,
     "orphanBeliefs": 0,
-    "avgConfidence": 0.5288029034059307,
+    "avgConfidence": 0.5273205944798437,
     "staleIndexes": 0,
-    "openQuestions": 41
+    "openQuestions": 47
   },
   "coverageTarget": 0.75,
   "coverage": [
     {
       "regionId": "region_ef673efeebf04b33bf7402b0",
       "regionTitle": "Spec",
-      "score": 0.6705170219338882,
+      "score": 0.668204267589388,
       "gaps": [
         "low confidence (0.50)",
-        "41 unanswered questions"
+        "47 unanswered questions"
       ]
     },
     {
@@ -84,27 +84,27 @@
       "met": true
     },
     {
-      "title": "No stale indexes",
-      "metric": "staleIndexes",
-      "current": 0,
-      "target": 0,
-      "comparator": "==",
+      "title": "Open questions triaged below 150",
+      "metric": "openQuestions",
+      "current": 47,
+      "target": 150,
+      "comparator": "<=",
       "met": true
     },
     {
       "title": "Average confidence above 0.5",
       "metric": "avgConfidence",
-      "current": 0.5288029034059307,
+      "current": 0.5273205944798437,
       "target": 0.5,
       "comparator": ">=",
       "met": true
     },
     {
-      "title": "Open questions triaged below 150",
-      "metric": "openQuestions",
-      "current": 41,
-      "target": 150,
-      "comparator": "<=",
+      "title": "No stale indexes",
+      "metric": "staleIndexes",
+      "current": 0,
+      "target": 0,
+      "comparator": "==",
       "met": true
     },
     {
@@ -129,7 +129,7 @@
       "id": "region_ef673efeebf04b33bf7402b0",
       "title": "Spec",
       "kind": "SEEDED",
-      "leafCount": 1597
+      "leafCount": 1690
     },
     {
       "id": "region_34d577e54ed448da95babfdc",
@@ -153,13 +153,13 @@
       "id": "region_eda75ec558354881b3788026",
       "title": "Operations",
       "kind": "SEEDED",
-      "leafCount": 130
+      "leafCount": 131
     },
     {
       "id": "region_abacde651502466fb9044433",
       "title": "Objectives",
       "kind": "SEEDED",
-      "leafCount": 156
+      "leafCount": 161
     }
   ]
 }

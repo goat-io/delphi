@@ -1,10 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import Header from './components/Header.jsx'
-import { LiveActivity } from './components/LiveActivity.jsx'
+import { Missions } from './components/Missions.jsx'
 import EvolutionLoop from './components/EvolutionLoop.jsx'
 import BrainGrowth from './components/BrainGrowth.jsx'
-import RegionCoverage from './components/RegionCoverage.jsx'
 import Goals from './components/Goals.jsx'
 import CycleFeed from './components/CycleFeed.jsx'
 import KnowledgeGraph from './components/KnowledgeGraph.jsx'
@@ -20,6 +19,7 @@ export default function App() {
   const isMobile = useIsMobile()
   const [liveData, setLiveData] = useState(null)
   const [sseOk, setSseOk] = useState(true)
+  const [showDetails, setShowDetails] = useState(false)
   const esRef = useRef(null)
 
   // Polling fallback (used when SSE is unavailable)
